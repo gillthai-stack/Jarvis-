@@ -34,6 +34,10 @@ if not any(NOTES_DIR == d or NOTES_DIR.is_relative_to(d) for d in SEARCH_DIRS):
 DATA_DIR = Path(os.getenv("JARVIS_DATA_DIR", ROOT / "data")).expanduser()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+# Files sent to Jarvis over Telegram land here, and Jarvis may read them.
+INBOX_DIR = DATA_DIR / "telegram"
+SEARCH_DIRS.append(INBOX_DIR.resolve())
+
 HOST = os.getenv("JARVIS_HOST", "127.0.0.1")
 PORT = int(os.getenv("JARVIS_PORT", "8765"))
 

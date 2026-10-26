@@ -7,6 +7,7 @@ Jarvis can read mail and create drafts, but it has no permission to send email.
 
 import base64
 import json
+import mimetypes
 import os
 import re
 import time
@@ -192,9 +193,19 @@ def gmail_draft(args: dict) -> str:
         body["threadId"] = original["threadId"]
     mail["Subject"] = subject
     mail.set_content(args["body"])
+    attached = ""
+    if args.get("attachment_path"):
+        path = Path(args["attachment_path"]).expanduser().resolve()
+        if not any(path.is_relative_to(root) for root in config.SEARCH_DIRS) or not path.is_file():
+            raise PermissionError(f"{path} is not a file in the folders Jarvis may read.")
+        if path.stat().st_size > 20 * 1024 * 1024:
+            raise ValueError("Attachments over 20 MB are too large for Gmail drafts.")
+        maintype, _, subtype = (mimetypes.guess_type(path.name)[0] or "application/octet-stream").partition("/")
+        mail.add_attachment(path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name)
+        attached = f", attaching {path.name}"
     body["raw"] = base64.urlsafe_b64encode(mail.as_bytes()).decode()
     draft = svc.users().drafts().create(userId="me", body={"message": body}).execute()
-    return f"Draft saved in Gmail (id {draft['id']}) to {args['to']} with subject '{subject}'. It has not been sent."
+    return f"Draft saved in Gmail (id {draft['id']}) to {args['to']} with subject '{subject}'{attached}. It has not been sent."
 
 
 # ---------- Calendar ----------
@@ -305,8 +316,9 @@ def tools(tool) -> dict:
                 "subject": {"type": "string"},
                 "body": {"type": "string", "description": "Plain-text email body"},
                 "reply_to_id": {"type": "string", "description": "Id of the email being replied to"},
+                "attachment_path": {"type": "string", "description": "File to attach, e.g. one sent over Telegram"},
             },
-            optional=("reply_to_id",),
+            optional=("reply_to_id", "attachment_path"),
         ),
         "calendar_events": tool(
             calendar_events,

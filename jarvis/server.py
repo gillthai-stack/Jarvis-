@@ -2,19 +2,44 @@
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, google_tools, notes, tools
+from . import config, google_tools, notes, telegram_bot, tools
 from .agent import Jarvis
 
 WEB_DIR = config.ROOT / "web"
 
-app = FastAPI(title="Jarvis")
 jarvis = Jarvis()
+phone_jarvis = Jarvis(client=jarvis.client, channel="telegram")
+sockets: set[WebSocket] = set()
+
+
+async def broadcast(event: dict):
+    """Send an event to every open dashboard, for things that don't come from the dashboard itself."""
+    for socket in list(sockets):
+        try:
+            await socket.send_text(json.dumps(event))
+        except Exception:
+            sockets.discard(socket)
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    task = None
+    if telegram_bot.enabled():
+        bridge = telegram_bot.TelegramBridge(phone_jarvis, broadcast)
+        task = asyncio.create_task(bridge.run())
+    yield
+    if task:
+        task.cancel()
+
+
+app = FastAPI(title="Jarvis", lifespan=lifespan)
 
 
 @app.get("/")
@@ -85,12 +110,14 @@ async def get_config():
         "search_dirs": [str(p) for p in config.SEARCH_DIRS],
         "notes_dir": str(config.NOTES_DIR),
         "google": google_tools.status(),
+        "telegram": telegram_bot.status(),
     }
 
 
 @app.websocket("/ws")
 async def ws(socket: WebSocket):
     await socket.accept()
+    sockets.add(socket)
 
     async def emit(event: dict):
         await socket.send_text(json.dumps(event))
@@ -102,16 +129,18 @@ async def ws(socket: WebSocket):
             if kind == "ask" and msg.get("text", "").strip():
                 await jarvis.ask(msg["text"].strip(), emit)
             elif kind == "set_model" and msg.get("model") in config.MODELS:
-                jarvis.model = msg["model"]
+                jarvis.model = phone_jarvis.model = msg["model"]
                 await emit({"type": "settings", "model": jarvis.model, "effort": jarvis.effort})
             elif kind == "set_effort" and msg.get("effort") in config.EFFORTS:
-                jarvis.effort = msg["effort"]
+                jarvis.effort = phone_jarvis.effort = msg["effort"]
                 await emit({"type": "settings", "model": jarvis.model, "effort": jarvis.effort})
             elif kind == "reset":
                 jarvis.reset()
                 await emit({"type": "reset"})
     except WebSocketDisconnect:
         pass
+    finally:
+        sockets.discard(socket)
 
 
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")

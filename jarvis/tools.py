@@ -165,9 +165,11 @@ TOOLS = {
     "recall": tool(recall, "List everything saved to long-term memory."),
 }
 
-from . import google_tools  # noqa: E402  (registers Gmail and Calendar tools)
+from . import google_tools, mac_tools, telegram_bot  # noqa: E402  (register their tools)
 
 TOOLS.update(google_tools.tools(tool))
+TOOLS.update(mac_tools.tools(tool))
+TOOLS.update(telegram_bot.tools(tool))
 
 PY_TYPES = {"string": str, "boolean": bool, "integer": int, "array": list}
 
@@ -201,8 +203,10 @@ def validate(name: str, args) -> str | None:
         expected = PY_TYPES[spec["type"]]
         if not isinstance(value, expected) or (expected is int and isinstance(value, bool)):
             return f"Field '{key}' should be a {spec['type']}."
+        if "enum" in spec and value not in spec["enum"]:
+            return f"Field '{key}' must be one of {', '.join(spec['enum'])}."
     return None
 
 
-def run_tool(name: str, args: dict) -> str:
+def run_tool(name: str, args: dict) -> str | list:
     return TOOLS[name]["fn"](args)
