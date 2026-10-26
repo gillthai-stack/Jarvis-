@@ -18,7 +18,7 @@ a sentence or two for simple requests, and plain prose without tables or heavy M
 You have tools to check the time, search and read files in the user's allowed folders, open web pages and Mac apps,
 search the web, read Gmail, save Gmail drafts, see and add Google Calendar events, save or recall long-term notes,
 look at the user's screen, see their open browser tab, control music and volume, add Apple Reminders and Notes,
-show notifications, run their Apple Shortcuts, and (if set up) message them on Telegram.
+show notifications, and run their Apple Shortcuts.
 Use them instead of guessing. When the user tells you something worth remembering about themselves or their work,
 save it with the remember tool. At the start of a conversation, call recall if earlier notes could help.
 
@@ -40,11 +40,6 @@ If they want it sent on, draft the email with gmail_draft and attach the file wi
 If a request needs something you cannot do yet (phone calls, clicking or typing on the screen),
 say so plainly and suggest what you can do instead."""
 
-TELEGRAM_NOTE = """
-
-This conversation is happening over Telegram on the user's phone, not by voice. Keep replies brief and use plain
-text: Telegram shows Markdown symbols literally. The user is probably away from the Mac."""
-
 # Opus and Sonnet 5.5 support the newer web tools and server-side fallbacks; Haiku uses the basic web search.
 FALLBACK_MODELS = {"claude-opus-5-5", "claude-sonnet-5-5"}
 MAX_TURNS = 20
@@ -60,9 +55,8 @@ def _server_tools(model: str) -> list[dict]:
 
 
 class Jarvis:
-    def __init__(self, client: anthropic.AsyncAnthropic | None = None, channel: str = "dashboard"):
+    def __init__(self, client: anthropic.AsyncAnthropic | None = None):
         self.client = client or anthropic.AsyncAnthropic()
-        self.system = SYSTEM_PROMPT + (TELEGRAM_NOTE if channel == "telegram" else "")
         self.messages: list = []
         self.model = config.DEFAULT_MODEL
         self.effort = config.DEFAULT_EFFORT
@@ -71,11 +65,10 @@ class Jarvis:
     def reset(self):
         self.messages = []
 
-    async def ask(self, content: str | list, emit: Emit) -> None:
-        """Answer one user turn. content is text, or Claude content blocks (text, images, PDFs)."""
+    async def ask(self, text: str, emit: Emit) -> None:
         async with self.lock:
             start = len(self.messages)
-            self.messages.append({"role": "user", "content": content})
+            self.messages.append({"role": "user", "content": text})
             error = None
             try:
                 await self._loop(emit)
@@ -99,7 +92,7 @@ class Jarvis:
             params = dict(
                 model=self.model,
                 max_tokens=64000,
-                system=self.system,
+                system=SYSTEM_PROMPT,
                 thinking={"type": "adaptive", "display": "summarized"},
                 output_config={"effort": self.effort},
                 tools=tools.tool_definitions() + _server_tools(self.model),

@@ -43,8 +43,7 @@ async function loadConfig() {
   els.effort.value = cfg.effort;
   els.toolinfo.innerHTML =
     `<p><strong>Tools:</strong> ${cfg.tools.join(", ")}</p>` +
-    `<p><strong>Folders Jarvis can read:</strong><br>${cfg.search_dirs.join("<br>")}</p>` +
-    `<p><strong>Telegram:</strong> ${cfg.telegram.linked ? "linked" : cfg.telegram.enabled ? "waiting for your first message to the bot" : "not set up (see docs/telegram-setup.md)"}</p>`;
+    `<p><strong>Folders Jarvis can read:</strong><br>${cfg.search_dirs.join("<br>")}</p>`;
   const savedModel = loadPref("model"), savedEffort = loadPref("effort");
   if (savedModel && savedModel in cfg.models && savedModel !== cfg.model) { els.model.value = savedModel; send({ type: "set_model", model: savedModel }); }
   if (savedEffort && cfg.efforts.includes(savedEffort) && savedEffort !== cfg.effort) { els.effort.value = savedEffort; send({ type: "set_effort", effort: savedEffort }); }
@@ -142,9 +141,6 @@ function handle(ev) {
       els.model.value = ev.model; els.effort.value = ev.effort;
       logItem("", "Settings", `Brain: ${ev.model}, effort: ${ev.effort}`);
       break;
-    case "telegram":
-      logItem("tg", "Telegram", ev.text);
-      break;
     case "reset":
       els.messages.querySelectorAll(".msg").forEach((m) => m.remove());
       els.empty.style.display = "";
@@ -162,7 +158,6 @@ const LABELS = {
   look_at_screen: "Looking at your screen", browser_tab: "Checking your browser", media_control: "Controlling music",
   set_volume: "Setting the volume", create_reminder: "Adding a reminder", create_note: "Creating a note",
   notify: "Showing a notification", list_shortcuts: "Listing Shortcuts", run_shortcut: "Running a Shortcut",
-  send_telegram: "Messaging you on Telegram",
   web_search_tool_result: "Searching the web", web_fetch_tool_result: "Reading a web page",
 };
 const toolLabel = (n) => LABELS[n] || n;

@@ -316,7 +316,7 @@ def tools(tool) -> dict:
                 "subject": {"type": "string"},
                 "body": {"type": "string", "description": "Plain-text email body"},
                 "reply_to_id": {"type": "string", "description": "Id of the email being replied to"},
-                "attachment_path": {"type": "string", "description": "File to attach, e.g. one sent over Telegram"},
+                "attachment_path": {"type": "string", "description": "Path of a file in the allowed folders to attach"},
             },
             optional=("reply_to_id", "attachment_path"),
         ),
