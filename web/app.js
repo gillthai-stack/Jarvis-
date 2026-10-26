@@ -155,6 +155,9 @@ const LABELS = {
   recall: "Checking memory", web_search: "Searching the web", web_fetch: "Reading a web page",
   gmail_search: "Searching Gmail", gmail_read: "Reading an email", gmail_draft: "Writing a Gmail draft",
   calendar_events: "Checking the calendar", calendar_create: "Adding a calendar event",
+  look_at_screen: "Looking at your screen", browser_tab: "Checking your browser", media_control: "Controlling music",
+  set_volume: "Setting the volume", create_reminder: "Adding a reminder", create_note: "Creating a note",
+  notify: "Showing a notification", list_shortcuts: "Listing Shortcuts", run_shortcut: "Running a Shortcut",
   web_search_tool_result: "Searching the web", web_fetch_tool_result: "Reading a web page",
 };
 const toolLabel = (n) => LABELS[n] || n;

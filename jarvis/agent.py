@@ -16,7 +16,9 @@ Speak like a capable, warm assistant. Your replies are often read aloud, so keep
 a sentence or two for simple requests, and plain prose without tables or heavy Markdown unless asked.
 
 You have tools to check the time, search and read files in the user's allowed folders, open web pages and Mac apps,
-search the web, read Gmail, save Gmail drafts, see and add Google Calendar events, and save or recall long-term notes.
+search the web, read Gmail, save Gmail drafts, see and add Google Calendar events, save or recall long-term notes,
+look at the user's screen, see their open browser tab, control music and volume, add Apple Reminders and Notes,
+show notifications, and run their Apple Shortcuts.
 Use them instead of guessing. When the user tells you something worth remembering about themselves or their work,
 save it with the remember tool. At the start of a conversation, call recall if earlier notes could help.
 
@@ -29,7 +31,13 @@ topics they care about (or top headlines if none are saved). Then give a briefin
 the day's schedule, the few emails that need attention and why, then two or three news items.
 If Google is not connected, say so and give the rest of the briefing.
 
-If a request needs something you cannot do yet (phone calls, Telegram, controlling the screen),
+Only look at the screen when the user asks about it or it clearly helps; describe what matters, not every pixel.
+You can see the screen but not click or type on it.
+
+When the user sends an invoice or receipt, pull out who it is from, the amount, currency, due date and invoice number.
+If they want it sent on, draft the email with gmail_draft and attach the file with attachment_path.
+
+If a request needs something you cannot do yet (phone calls, clicking or typing on the screen),
 say so plainly and suggest what you can do instead."""
 
 # Opus and Sonnet 5.5 support the newer web tools and server-side fallbacks; Haiku uses the basic web search.
@@ -140,7 +148,8 @@ class Jarvis:
         if error:
             await emit({"type": "tool_result", "id": block.id, "name": block.name, "ok": False, "output": error})
             return {"type": "tool_result", "tool_use_id": block.id, "is_error": True, "content": error}
-        await emit({"type": "tool_result", "id": block.id, "name": block.name, "ok": True, "output": output[:2000]})
+        summary = output[:2000] if isinstance(output, str) else _describe_blocks(output)
+        await emit({"type": "tool_result", "id": block.id, "name": block.name, "ok": True, "output": summary})
         return {"type": "tool_result", "tool_use_id": block.id, "content": output}
 
     async def _forward(self, event, emit: Emit) -> None:
@@ -162,6 +171,11 @@ class Jarvis:
             elif block.type.endswith("_tool_result"):
                 await emit({"type": "tool_result", "id": block.tool_use_id, "name": block.type,
                             "ok": True, "output": _summarize_server_result(block)})
+
+
+def _describe_blocks(blocks: list) -> str:
+    parts = [b["text"][:300] if b["type"] == "text" else f"[{b['type']}]" for b in blocks]
+    return " ".join(parts)
 
 
 def _summarize_server_result(block) -> str:
