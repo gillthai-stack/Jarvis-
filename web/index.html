@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2214%22 fill=%22%2336c5f0%22/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div id="orb" class="orb idle"><span></span></div>
+      <div>
+        <h1>JARVIS</h1>
+        <div id="status" class="status">Connecting…</div>
+      </div>
+    </div>
+    <div class="controls">
+      <label>Brain
+        <select id="model"></select>
+      </label>
+      <label>Effort
+        <select id="effort"></select>
+      </label>
+      <button id="reset" class="ghost" title="Start a new conversation">New chat</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="chat">
+      <div id="messages" class="messages">
+        <div class="empty" id="empty">
+          <p>Say <strong>"Jarvis, …"</strong> with hands-free on, hold the mic, or type below.</p>
+          <div class="suggestions">
+            <button>What time is it?</button>
+            <button>Find my latest invoice PDF</button>
+            <button>What's in the news about AI today?</button>
+            <button>Open Spotify</button>
+          </div>
+        </div>
+      </div>
+      <form id="composer" class="composer">
+        <button type="button" id="mic" class="mic" title="Hold to talk">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>
+        </button>
+        <input id="input" autocomplete="off" placeholder="Ask Jarvis anything…">
+        <button type="submit" id="send">Send</button>
+      </form>
+    </section>
+
+    <aside>
+      <div class="panel">
+        <h2>Voice</h2>
+        <label class="toggle"><input type="checkbox" id="handsfree"> Hands-free (wake word "Jarvis")</label>
+        <label class="toggle"><input type="checkbox" id="speak" checked> Speak replies</label>
+        <div id="heard" class="heard"></div>
+      </div>
+      <div class="panel grow">
+        <h2>Activity</h2>
+        <ol id="activity" class="activity"></ol>
+      </div>
+      <div class="panel">
+        <h2>Session</h2>
+        <dl class="stats">
+          <dt>Requests</dt><dd id="stat-requests">0</dd>
+          <dt>Tokens in</dt><dd id="stat-in">0</dd>
+          <dt>Tokens out</dt><dd id="stat-out">0</dd>
+        </dl>
+        <details>
+          <summary>Tools and folders</summary>
+          <div id="toolinfo" class="toolinfo"></div>
+        </details>
+      </div>
+    </aside>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
