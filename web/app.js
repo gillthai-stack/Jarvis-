@@ -130,6 +130,7 @@ function handle(ev) {
       break;
     case "done":
       busy = false;
+      loadToday();
       els.send.disabled = false;
       if (current) current.classList.remove("streaming");
       current = null;
@@ -152,6 +153,8 @@ const LABELS = {
   get_time: "Checking the time", search_files: "Searching files", read_file: "Reading a file",
   open_url: "Opening a web page", open_app: "Opening an app", remember: "Saving to memory",
   recall: "Checking memory", web_search: "Searching the web", web_fetch: "Reading a web page",
+  gmail_search: "Searching Gmail", gmail_read: "Reading an email", gmail_draft: "Writing a Gmail draft",
+  calendar_events: "Checking the calendar", calendar_create: "Adding a calendar event",
   web_search_tool_result: "Searching the web", web_fetch_tool_result: "Reading a web page",
 };
 const toolLabel = (n) => LABELS[n] || n;
@@ -281,6 +284,57 @@ els.mic.addEventListener("pointerdown", pttStart);
 els.mic.addEventListener("pointerup", pttEnd);
 els.mic.addEventListener("pointerleave", pttEnd);
 
+// ---------- Today panel (Google) ----------
+
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function fmtTime(ev) {
+  if (ev.all_day) return "All day";
+  return new Date(ev.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+async function loadToday() {
+  const box = $("today");
+  let data;
+  try { data = await (await fetch("/api/today")).json(); } catch { return; }
+  if (!data.connected) {
+    const status = await (await fetch("/api/google/status")).json();
+    box.innerHTML = status.has_credentials
+      ? `<span class="muted">Connect Google to see your calendar and email here.</span>
+         <a class="connect" href="/auth/google"><button>Connect Google</button></a>`
+      : `<span class="muted">Gmail and Calendar aren't set up yet. Follow <code>docs/google-setup.md</code>,
+         then put the file at:</span><code class="muted">${esc(status.credentials_path)}</code>`;
+    return;
+  }
+  if (data.error) { box.innerHTML = `<span class="error">${esc(data.error)}</span>`; return; }
+  const now = Date.now();
+  const events = data.events.map((ev) => {
+    const past = !ev.all_day && new Date(ev.end).getTime() < now;
+    return `<li class="${past ? "past" : ""}"><time>${fmtTime(ev)}</time><span>${esc(ev.title)}</span></li>`;
+  }).join("");
+  box.innerHTML = `
+    <div class="unread"><span>Unread in inbox</span><strong>${data.unread}</strong></div>
+    ${events ? `<ul>${events}</ul>` : `<span class="muted">Nothing else on the calendar today.</span>`}`;
+}
+
+function googleNotice() {
+  const params = new URLSearchParams(location.search);
+  if (params.get("google") === "connected") logItem("ok", "Google connected", "Jarvis can now read Gmail and your calendar.");
+  if (params.get("google_error")) addMessage("error", "Google sign-in failed: " + params.get("google_error"));
+  if (params.has("google") || params.has("google_error")) history.replaceState(null, "", "/");
+}
+
+// ---------- views ----------
+
+function showView(view) {
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === view));
+  document.querySelector(".chat").hidden = view !== "chat";
+  $("graphview").hidden = view !== "graph";
+  savePref("view", view);
+  if (view === "graph" && window.openGraph) window.openGraph();
+}
+window.jarvisAsk = (text) => { showView("chat"); ask(text); };
+
 // ---------- wiring ----------
 
 els.form.addEventListener("submit", (e) => { e.preventDefault(); ask(els.input.value); els.input.value = ""; });
@@ -293,4 +347,11 @@ if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = () => {};
 if (loadPref("speak") === "0") els.speak.checked = false;
 if (!Recognition) { els.handsfree.disabled = true; els.heard.textContent = "Voice input needs Chrome or Safari."; }
 
+document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => showView(t.dataset.view)));
+$("briefing").addEventListener("click", () => window.jarvisAsk("Give me my morning briefing."));
+
+googleNotice();
+loadToday();
+setInterval(loadToday, 120000);
+if (loadPref("view") === "graph") showView("graph");
 connect();
