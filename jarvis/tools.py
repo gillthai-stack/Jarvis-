@@ -128,10 +128,15 @@ def recall(_: dict) -> str:
     return json.dumps(notes, indent=1) if notes else "No saved notes yet."
 
 
-# name -> (function, description, input schema)
+def tool(fn, description, props=None, optional=()):
+    props = props or {}
+    return {"fn": fn, "description": description, "props": props,
+            "required": [k for k in props if k not in optional]}
+
+
 TOOLS = {
-    "get_time": (get_time, "Get the current local date and time.", {}),
-    "search_files": (
+    "get_time": tool(get_time, "Get the current local date and time."),
+    "search_files": tool(
         search_files,
         "Search the user's allowed folders for files whose name contains the query. "
         "Set search_contents to also look inside text files (slower).",
@@ -139,41 +144,44 @@ TOOLS = {
             "query": {"type": "string", "description": "Text to look for"},
             "search_contents": {"type": "boolean", "description": "Also search inside text files"},
         },
+        optional=("search_contents",),
     ),
-    "read_file": (
+    "read_file": tool(
         read_file,
         "Read a text, Markdown, code or PDF file from the allowed folders. Use a path returned by search_files.",
         {"path": {"type": "string", "description": "Absolute path to the file"}},
     ),
-    "open_url": (open_url, "Open a web page in the user's default browser.", {"url": {"type": "string"}}),
-    "open_app": (
+    "open_url": tool(open_url, "Open a web page in the user's default browser.", {"url": {"type": "string"}}),
+    "open_app": tool(
         open_app,
         "Open a Mac application by name, for example Safari, Notes, Calendar or Spotify.",
         {"name": {"type": "string", "description": "Application name"}},
     ),
-    "remember": (
+    "remember": tool(
         remember,
         "Save a fact about the user or a task to long-term memory so it is available in later conversations.",
         {"note": {"type": "string"}},
     ),
-    "recall": (recall, "List everything saved to long-term memory.", {}),
+    "recall": tool(recall, "List everything saved to long-term memory."),
 }
+
+from . import google_tools  # noqa: E402  (registers Gmail and Calendar tools)
+
+TOOLS.update(google_tools.tools(tool))
+
+PY_TYPES = {"string": str, "boolean": bool, "integer": int, "array": list}
 
 
 def tool_definitions() -> list[dict]:
-    defs = []
-    for name, (_, description, props) in TOOLS.items():
-        defs.append({
+    return [
+        {
             "name": name,
-            "description": description,
+            "description": t["description"],
             "eager_input_streaming": True,
-            "input_schema": {
-                "type": "object",
-                "properties": props,
-                "required": [k for k in props if k != "search_contents"],
-            },
-        })
-    return defs
+            "input_schema": {"type": "object", "properties": t["props"], "required": t["required"]},
+        }
+        for name, t in TOOLS.items()
+    ]
 
 
 def validate(name: str, args) -> str | None:
@@ -182,18 +190,19 @@ def validate(name: str, args) -> str | None:
         return f"Unknown tool {name}."
     if not isinstance(args, dict):
         return "Tool input was not an object."
-    props = TOOLS[name][2]
-    for key, spec in props.items():
-        required = key != "search_contents"
+    t = TOOLS[name]
+    for key in t["required"]:
         if key not in args:
-            if required:
-                return f"Missing required field '{key}'."
-            continue
-        expected = {"string": str, "boolean": bool}[spec["type"]]
-        if not isinstance(args[key], expected):
+            return f"Missing required field '{key}'."
+    for key, value in args.items():
+        spec = t["props"].get(key)
+        if spec is None:
+            return f"Unexpected field '{key}'."
+        expected = PY_TYPES[spec["type"]]
+        if not isinstance(value, expected) or (expected is int and isinstance(value, bool)):
             return f"Field '{key}' should be a {spec['type']}."
     return None
 
 
 def run_tool(name: str, args: dict) -> str:
-    return TOOLS[name][0](args)
+    return TOOLS[name]["fn"](args)

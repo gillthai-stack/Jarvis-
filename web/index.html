@@ -16,7 +16,12 @@
         <div id="status" class="status">Connecting…</div>
       </div>
     </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-view="chat" role="tab">Chat</button>
+      <button class="tab" data-view="graph" role="tab">Knowledge graph</button>
+    </nav>
     <div class="controls">
+      <button id="briefing" title="Calendar, important email and news">☀ Morning briefing</button>
       <label>Brain
         <select id="model"></select>
       </label>
@@ -33,10 +38,10 @@
         <div class="empty" id="empty">
           <p>Say <strong>"Jarvis, …"</strong> with hands-free on, hold the mic, or type below.</p>
           <div class="suggestions">
-            <button>What time is it?</button>
+            <button>What's on my calendar this week?</button>
+            <button>Any important unread emails?</button>
             <button>Find my latest invoice PDF</button>
             <button>What's in the news about AI today?</button>
-            <button>Open Spotify</button>
           </div>
         </div>
       </div>
@@ -49,7 +54,29 @@
       </form>
     </section>
 
+    <section class="graphview" id="graphview" hidden>
+      <div class="graph-toolbar">
+        <input id="graph-search" placeholder="Find a note…" autocomplete="off">
+        <span id="graph-info" class="muted"></span>
+        <button id="graph-refresh" class="ghost">Rescan notes</button>
+      </div>
+      <div id="graph" class="graph"></div>
+      <div id="notecard" class="notecard" hidden>
+        <div class="notecard-head">
+          <strong id="note-name"></strong>
+          <button id="note-close" class="ghost small" aria-label="Close">✕</button>
+        </div>
+        <div id="note-meta" class="muted"></div>
+        <pre id="note-preview"></pre>
+        <button id="note-ask">Ask Jarvis about this note</button>
+      </div>
+    </section>
+
     <aside>
+      <div class="panel">
+        <h2>Today</h2>
+        <div id="today" class="today"><span class="muted">Loading…</span></div>
+      </div>
       <div class="panel">
         <h2>Voice</h2>
         <label class="toggle"><input type="checkbox" id="handsfree"> Hands-free (wake word "Jarvis")</label>
@@ -75,6 +102,7 @@
     </aside>
   </main>
 
+  <script src="/static/graph.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

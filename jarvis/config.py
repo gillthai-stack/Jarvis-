@@ -25,6 +25,12 @@ SEARCH_DIRS = [
     if p.strip()
 ]
 
+# Markdown notes shown in the 3D knowledge graph (an Obsidian vault works well).
+_notes = os.getenv("JARVIS_NOTES_DIR", "~/Documents")
+NOTES_DIR = Path(_notes).expanduser().resolve()
+if not any(NOTES_DIR == d or NOTES_DIR.is_relative_to(d) for d in SEARCH_DIRS):
+    SEARCH_DIRS.append(NOTES_DIR)
+
 DATA_DIR = Path(os.getenv("JARVIS_DATA_DIR", ROOT / "data")).expanduser()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 

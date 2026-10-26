@@ -3,3 +3,5 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 python-dotenv>=1.0
 pypdf>=5.0
+google-api-python-client>=2.140
+google-auth-oauthlib>=1.2
