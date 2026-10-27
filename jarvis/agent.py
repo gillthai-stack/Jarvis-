@@ -40,6 +40,14 @@ If they want it sent on, draft the email with gmail_draft and attach the file wi
 If a request needs something you cannot do yet (phone calls, clicking or typing on the screen),
 say so plainly and suggest what you can do instead."""
 
+if config.OBSIDIAN_VAULT:
+    SYSTEM_PROMPT += f"""
+
+The user keeps their notes in the Obsidian vault "{config.OBSIDIAN_VAULT.name}", which you can search, read and write.
+When they ask about their notes, ideas or past thinking, search the vault first. When they ask you to note, jot or
+log something, add it to today's daily note unless they name another note. When you write a new note, link it to
+related existing notes with [[wikilinks]]."""
+
 # Opus and Sonnet 5.5 support the newer web tools and server-side fallbacks; Haiku uses the basic web search.
 FALLBACK_MODELS = {"claude-opus-5-5", "claude-sonnet-5-5"}
 MAX_TURNS = 20

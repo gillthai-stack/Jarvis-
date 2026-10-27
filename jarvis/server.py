@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, google_tools, notes, tools
+from . import config, google_tools, notes, obsidian, tools
 from .agent import Jarvis
 
 WEB_DIR = config.ROOT / "web"
@@ -68,9 +68,14 @@ async def graph(refresh: bool = False):
 @app.get("/api/note")
 async def note(id: str):
     try:
-        return notes.read_note(id)
+        result = notes.read_note(id)
     except FileNotFoundError:
         raise HTTPException(404, "Note not found")
+    try:
+        result["obsidian_url"] = obsidian.open_url(result["path"]) if config.OBSIDIAN_VAULT else None
+    except (FileNotFoundError, obsidian.NoVault):
+        result["obsidian_url"] = None
+    return result
 
 
 @app.get("/api/config")
@@ -85,6 +90,7 @@ async def get_config():
         "search_dirs": [str(p) for p in config.SEARCH_DIRS],
         "notes_dir": str(config.NOTES_DIR),
         "google": google_tools.status(),
+        "obsidian": obsidian.status(),
     }
 
 

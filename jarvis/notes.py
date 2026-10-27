@@ -19,7 +19,7 @@ _cache = {"at": 0.0, "graph": None}
 def _note_files(root: Path):
     count = 0
     for p in root.rglob("*.md"):
-        if any(part.startswith(".") or part == "node_modules" for part in p.relative_to(root).parts):
+        if any(part.startswith(".") or part == "node_modules" for part in p.relative_to(root).parts):  # .obsidian, .trash
             continue
         yield p
         count += 1

@@ -14,6 +14,9 @@ It uses Claude through the Anthropic API.
 - **Gmail:** search and read your email, and write replies into your Drafts folder. It cannot send email.
 - **Google Calendar:** see your schedule and add events you ask for. The Today panel shows today's events and unread count.
 - **Morning briefing:** one click (or "Jarvis, morning briefing") for today's schedule, emails that need attention, and news.
+- **Obsidian:** finds your vault on its own, then searches and reads notes (with backlinks), writes new linked notes,
+  appends to existing ones, logs to today's daily note ("Jarvis, note that…"), and opens notes in Obsidian.
+  It never overwrites or deletes a note.
 - **Knowledge graph:** a 3D map of your Markdown notes, linked by `[[wikilinks]]`, Markdown links and `#tags`.
   Click a note to preview it or ask Jarvis about it.
 - **See your screen:** "Jarvis, what's this error on my screen?" It takes a screenshot and reads it.
@@ -52,7 +55,8 @@ app instead.
 | `JARVIS_USER_NAME` | What Jarvis calls you |
 | `JARVIS_MODEL` / `JARVIS_EFFORT` | Default brain and effort |
 | `JARVIS_SEARCH_DIRS` | Comma-separated folders Jarvis may search and read |
-| `JARVIS_NOTES_DIR` | Folder of Markdown notes for the knowledge graph (an Obsidian vault works well) |
+| `JARVIS_OBSIDIAN_VAULT` | Your Obsidian vault folder. Empty means the vault Obsidian has open |
+| `JARVIS_NOTES_DIR` | Folder of Markdown notes for the knowledge graph. Empty means your Obsidian vault |
 | `JARVIS_GOOGLE_CREDENTIALS` | Path to your Google OAuth client file (default `data/google_credentials.json`) |
 | `JARVIS_PORT` | Dashboard port (default 8765) |
 
@@ -65,6 +69,7 @@ Jarvis only listens on `127.0.0.1`, so nothing outside your Mac can reach it.
 - `jarvis/tools.py` defines the Mac tools. Add a new tool by writing a function and adding it to `TOOLS`.
 - `jarvis/google_tools.py` handles Google sign-in and the Gmail and Calendar tools.
 - `jarvis/mac_tools.py` has the screen and Mac control tools (screencapture, AppleScript, Shortcuts).
+- `jarvis/obsidian.py` has the Obsidian tools (search, read, write, daily note, open).
 - `jarvis/notes.py` builds the knowledge graph from your notes folder.
 - `jarvis/server.py` is a FastAPI server that serves the dashboard and talks to it over a WebSocket.
 - `web/` is the dashboard (plain HTML, CSS and JavaScript, with no build step). Voice uses the browser's built-in

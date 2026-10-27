@@ -43,7 +43,8 @@ async function loadConfig() {
   els.effort.value = cfg.effort;
   els.toolinfo.innerHTML =
     `<p><strong>Tools:</strong> ${cfg.tools.join(", ")}</p>` +
-    `<p><strong>Folders Jarvis can read:</strong><br>${cfg.search_dirs.join("<br>")}</p>`;
+    `<p><strong>Folders Jarvis can read:</strong><br>${cfg.search_dirs.join("<br>")}</p>` +
+    `<p><strong>Obsidian vault:</strong> ${cfg.obsidian.vault ? esc(cfg.obsidian.vault) : "none found (set JARVIS_OBSIDIAN_VAULT)"}</p>`;
   const savedModel = loadPref("model"), savedEffort = loadPref("effort");
   if (savedModel && savedModel in cfg.models && savedModel !== cfg.model) { els.model.value = savedModel; send({ type: "set_model", model: savedModel }); }
   if (savedEffort && cfg.efforts.includes(savedEffort) && savedEffort !== cfg.effort) { els.effort.value = savedEffort; send({ type: "set_effort", effort: savedEffort }); }
@@ -158,6 +159,8 @@ const LABELS = {
   look_at_screen: "Looking at your screen", browser_tab: "Checking your browser", media_control: "Controlling music",
   set_volume: "Setting the volume", create_reminder: "Adding a reminder", create_note: "Creating a note",
   notify: "Showing a notification", list_shortcuts: "Listing Shortcuts", run_shortcut: "Running a Shortcut",
+  obsidian_search: "Searching your vault", obsidian_read: "Reading a note", obsidian_write: "Writing a note",
+  obsidian_daily: "Updating today's daily note", obsidian_open: "Opening Obsidian",
   web_search_tool_result: "Searching the web", web_fetch_tool_result: "Reading a web page",
 };
 const toolLabel = (n) => LABELS[n] || n;

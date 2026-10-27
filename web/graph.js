@@ -90,6 +90,8 @@
     const meta = document.getElementById("note-meta");
     const preview = document.getElementById("note-preview");
     const askBtn = document.getElementById("note-ask");
+    const openLink = document.getElementById("note-open");
+    openLink.hidden = true;
     if (node.kind === "tag") {
       const notes = [...selected.near].map((id) => data.nodes.find((n) => n.id === id)?.name).filter(Boolean);
       meta.textContent = `Tag used in ${notes.length} notes`;
@@ -102,6 +104,7 @@
     const note = await (await fetch("/api/note?id=" + encodeURIComponent(node.id))).json();
     meta.textContent = `${node.id} · ${node.links} connections · edited ${note.modified}`;
     preview.textContent = note.preview;
+    if (note.obsidian_url) { openLink.href = note.obsidian_url; openLink.hidden = false; }
     askBtn.onclick = () => window.jarvisAsk(`Read my note at ${note.path} and summarize it, then tell me how it connects to my other notes.`);
   }
 
