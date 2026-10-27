@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { createAudioFrame, createMicMeter, type AudioFrame } from './audio'
 import JarvisCore from './core/JarvisCore'
 import type { Responder } from './demoResponder'
 import { STATE_LABEL, type AssistantState, type ChatMessage, type MessageRole } from './types'
@@ -92,6 +93,9 @@ export default function App({ respond, engine }: AppProps) {
   const startedAt = useRef(Date.now())
 
   const energyRef = useRef(0)
+  const audioRef = useRef<AudioFrame>(createAudioFrame())
+  const micMeter = useMemo(() => createMicMeter(audioRef.current), [])
+  const [micLevelLive, setMicLevelLive] = useState(false)
   const turnRef = useRef(0)
   const nextId = useRef(1)
   const recognizerRef = useRef<Recognizer | null>(null)
@@ -179,6 +183,26 @@ export default function App({ respond, engine }: AppProps) {
     recognizerRef.current = recognizer
     return () => recognizer?.abort()
   }, [])
+
+  // While listening, also open the mic through Web Audio so the waveform follows your voice.
+  // If that fails (permission, or a browser that won't share the mic twice) the visuals fall back
+  // to a simulated level and speech recognition carries on regardless.
+  useEffect(() => {
+    if (state !== 'listening') {
+      micMeter.stop()
+      setMicLevelLive(false)
+      return
+    }
+    let cancelled = false
+    void micMeter.start().then((ok) => {
+      if (!cancelled) setMicLevelLive(ok)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [state, micMeter])
+
+  useEffect(() => () => micMeter.stop(), [micMeter])
 
   const startListening = useCallback(() => {
     const recognizer = recognizerRef.current
@@ -286,10 +310,13 @@ export default function App({ respond, engine }: AppProps) {
 
       <main className="main">
         <section className="core-stage" aria-label={`Holographic core, currently ${STATE_LABEL[state].toLowerCase()}`}>
-          <JarvisCore state={state} energyRef={energyRef} reducedMotion={reducedMotion} onFps={setFps} />
-          <div className="core-caption" aria-hidden="true">
-            {STATE_LABEL[state].toUpperCase()}
-          </div>
+          <JarvisCore
+            state={state}
+            energyRef={energyRef}
+            audioRef={audioRef}
+            reducedMotion={reducedMotion}
+            onFps={setFps}
+          />
         </section>
 
         <aside className="panel panel-left" aria-labelledby="telemetry-title">
@@ -319,6 +346,12 @@ export default function App({ respond, engine }: AppProps) {
               <dt>Voice</dt>
               <dd className="truncate" title={voiceName ?? undefined}>
                 {voiceName ?? '—'}
+              </dd>
+            </div>
+            <div>
+              <dt>Waveform</dt>
+              <dd className={micLevelLive ? 'ok' : undefined}>
+                {micLevelLive ? 'Mic (live)' : state === 'speaking' ? 'Speech rhythm' : 'Simulated'}
               </dd>
             </div>
             <div>

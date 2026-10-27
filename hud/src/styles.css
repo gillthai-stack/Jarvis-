@@ -130,20 +130,6 @@ input {
   inset: 0;
 }
 
-.core-caption {
-  position: absolute;
-  left: 50%;
-  bottom: 6%;
-  transform: translateX(-50%);
-  font-family: var(--mono);
-  font-size: 0.75rem;
-  letter-spacing: 0.5em;
-  color: var(--accent);
-  text-shadow: 0 0 12px var(--accent);
-  pointer-events: none;
-  transition: color 0.4s ease;
-}
-
 .core-fallback {
   position: absolute;
   inset: 0;
@@ -649,6 +635,133 @@ input {
 .toggle.is-disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* ---------- HUD overlay on the core ---------- */
+
+.hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-family: var(--mono);
+  color: var(--accent);
+  transition: color 0.5s ease;
+}
+
+.hud-reticle {
+  position: absolute;
+  inset: 4% 0;
+  width: 100%;
+  height: 92%;
+  overflow: visible;
+}
+
+.hud-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 0.6;
+  opacity: 0.45;
+  transition: stroke 0.5s ease;
+}
+.hud-dash {
+  stroke-dasharray: 2 6;
+  opacity: 0.3;
+}
+.hud-text {
+  fill: var(--accent);
+  font-size: 7px;
+  letter-spacing: 1px;
+  opacity: 0.55;
+}
+
+.hud-spin {
+  transform-origin: 0 0;
+  animation: spin 90s linear infinite;
+}
+.hud-thinking .hud-spin {
+  animation-duration: 14s;
+}
+
+.hud-brackets {
+  transform-origin: 0 0;
+  transition: transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.4s ease;
+  opacity: 0.75;
+}
+.hud-bracket {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.4;
+  stroke-linecap: square;
+  filter: drop-shadow(0 0 3px var(--accent));
+}
+/* Brackets close in to "lock on" while listening, open out while thinking, settle while speaking. */
+.hud-listening .hud-brackets { transform: scale(0.88); opacity: 1; }
+.hud-thinking .hud-brackets { transform: scale(1.06); animation: blink 0.9s steps(2, start) infinite; }
+.hud-speaking .hud-brackets { transform: scale(0.95); opacity: 0.9; }
+
+.hud-label {
+  position: absolute;
+  display: grid;
+  gap: 2px;
+  padding: 6px 10px;
+  min-width: 128px;
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-color: var(--cyan-dim);
+  border-style: solid;
+  border-width: 0;
+  background: linear-gradient(var(--hud-dir, to right), rgba(34, 211, 238, 0.07), transparent);
+}
+.hud-tl { top: 14px; left: 14px; border-left-width: 1px; border-top-width: 1px; }
+.hud-tr { top: 14px; right: 14px; border-right-width: 1px; border-top-width: 1px; text-align: right; --hud-dir: to left; }
+.hud-bl { bottom: 14px; left: 14px; border-left-width: 1px; border-bottom-width: 1px; }
+.hud-br { bottom: 14px; right: 14px; border-right-width: 1px; border-bottom-width: 1px; text-align: right; --hud-dir: to left; }
+
+.hud-key {
+  color: var(--text-dim);
+  font-size: 0.6rem;
+}
+.hud-value {
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 8px rgba(34, 211, 238, 0.45);
+}
+.hud-sub {
+  color: var(--text-dim);
+  font-size: 0.58rem;
+}
+.hud-bar {
+  display: block;
+  height: 2px;
+  margin-top: 3px;
+  background: rgba(34, 211, 238, 0.15);
+  overflow: hidden;
+}
+.hud-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+  transform-origin: left center;
+  transition: transform 0.12s linear;
+}
+
+@keyframes blink {
+  to { opacity: 0.35; }
+}
+
+@media (max-width: 600px) {
+  .hud-label {
+    min-width: 0;
+    padding: 4px 6px;
+  }
+  .hud-bl,
+  .hud-tr .hud-sub,
+  .hud-br .hud-sub {
+    display: none;
+  }
 }
 
 /* ---------- Animations ---------- */
