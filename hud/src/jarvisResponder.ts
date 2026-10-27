@@ -51,6 +51,10 @@ export interface ServerEvent {
   data_url?: string
   // decision
   ok?: boolean
+  // timing
+  total_ms?: number
+  first_text_ms?: number | null
+  steps?: number
 }
 
 /** The live connection: answers requests and also carries computer-use events and controls. */
@@ -101,7 +105,7 @@ export function createJarvisLink(url = socketUrl()): JarvisLink {
       }
     })
 
-  const askOnce = async (input: string): Promise<string> => {
+  const askOnce = async (input: string, onText?: (delta: string) => void): Promise<string> => {
     const s = await connect()
     return new Promise<string>((resolve, reject) => {
       let text = ''
@@ -110,8 +114,10 @@ export function createJarvisLink(url = socketUrl()): JarvisLink {
       onEvent = (ev) => {
         if (ev.type === 'text' && ev.text) {
           text += ev.text
-        } else if (ev.type === 'tool_start' && text) {
+          onText?.(ev.text)
+        } else if (ev.type === 'tool_start' && text && !text.endsWith('\n\n')) {
           text += '\n\n'
+          onText?.('\n\n')
         } else if (ev.type === 'error' && ev.message) {
           errors.push(ev.message)
         } else if (ev.type === 'done') {
@@ -130,8 +136,8 @@ export function createJarvisLink(url = socketUrl()): JarvisLink {
   }
 
   return {
-    respond: (input) => {
-      const result = queue.then(() => askOnce(input))
+    respond: (input, onText) => {
+      const result = queue.then(() => askOnce(input, onText))
       queue = result.catch(() => undefined)
       return result
     },

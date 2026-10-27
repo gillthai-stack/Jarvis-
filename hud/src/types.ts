@@ -71,7 +71,7 @@ export type ActionStatus =
 
 export interface AgentAction {
   id: string
-  kind: 'file_plan' | 'click' | 'type'
+  kind: 'file_plan' | 'click' | 'type' | 'key' | 'scroll'
   summary: string
   status: ActionStatus
   result: string | null
@@ -83,6 +83,10 @@ export interface AgentAction {
     moves?: { source: string; destination: string }[]
     target?: string
     text?: string
+    press_enter?: boolean
+    keys?: string
+    purpose?: string
+    lines?: number
     x?: number
     y?: number
     button?: string

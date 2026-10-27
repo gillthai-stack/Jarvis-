@@ -12,6 +12,7 @@ import {
   type VoiceStatus,
 } from './localVoice'
 import OpsPanel from './ops/OpsPanel'
+import { createSpeechQueue, type SpeechQueue } from './speechQueue'
 import {
   AGENT_TO_CORE,
   STATE_LABEL,
@@ -145,6 +146,9 @@ export default function App({ respond, engine, model, link }: AppProps) {
   const [transcribing, setTranscribing] = useState(false)
   const [speaking, setSpeaking] = useState(false)
   const [listenStartedAt, setListenStartedAt] = useState(0)
+  /** What Jarvis says it is doing between tool calls, shown while it works. */
+  const [progress, setProgress] = useState('')
+  const [lastTiming, setLastTiming] = useState<{ total: number; first: number | null } | null>(null)
   const [micPermission, setMicPermission] = useMicPermission()
 
   // With the Jarvis server, speech is recognised locally by whisper.cpp and replies are spoken by
@@ -179,7 +183,14 @@ export default function App({ respond, engine, model, link }: AppProps) {
   const errorTimerRef = useRef(0)
 
   const addMessage = useCallback((role: MessageRole, text: string) => {
-    setMessages((prev) => [...prev, { id: nextId.current++, role, text, time: new Date() }])
+    const id = nextId.current++
+    setMessages((prev) => [...prev, { id, role, text, time: new Date() }])
+    return id
+  }, [])
+
+  /** Replaces the text of a message, used while a reply streams in. */
+  const updateMessage = useCallback((id: number, text: string) => {
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, text } : m)))
   }, [])
 
   /** Shows a problem in the status line and turns the core red for a few seconds. */
@@ -322,6 +333,14 @@ export default function App({ respond, engine, model, link }: AppProps) {
         setScreenshots((prev) => [...prev, frame].slice(-MAX_SCREENSHOTS))
       } else if (ev.type === 'decision' && ev.ok === false && ev.message) {
         setNotice(ev.message)
+      } else if (ev.type === 'thinking' && ev.text) {
+        setProgress((p) => (p + ev.text).slice(-200))
+      } else if (ev.type === 'tool_start' || ev.type === 'text' || ev.type === 'done') {
+        setProgress('')
+      } else if (ev.type === 'notice' && ev.message) {
+        setNotice(ev.message)
+      } else if (ev.type === 'timing' && typeof ev.total_ms === 'number') {
+        setLastTiming({ total: ev.total_ms, first: ev.first_text_ms ?? null })
       }
     }
     const unsubscribe = link.subscribe(onEvent)
@@ -358,27 +377,69 @@ export default function App({ respond, engine, model, link }: AppProps) {
       const turn = ++turnRef.current
       stopSpeaking() // a new request silences the previous reply
       setNotice('')
+      setProgress('')
       addMessage('user', text)
       setState('thinking')
+
+      // The reply is spoken sentence by sentence while it is still arriving.
+      const output = speakRepliesRef.current ? outputRef.current : null
+      let speech: SpeechQueue | null = null
+      let controller: AbortController | null = null
+      if (output) {
+        controller = new AbortController()
+        speechAbortRef.current = controller
+        speech = createSpeechQueue(output, {
+          signal: controller.signal,
+          onStart: () => {
+            if (turn !== turnRef.current) return
+            setSpeaking(true)
+            setState((s) => (s === 'thinking' || s === 'idle' ? 'speaking' : s))
+          },
+          onBoundary: () => {
+            energyRef.current = 1
+          },
+          onError: (err) => showError(`Couldn't speak the reply: ${err.message}`),
+        })
+      }
+
+      let streamId: number | null = null
+      let streamed = ''
+      const onText = (delta: string) => {
+        if (turn !== turnRef.current) return
+        streamed += delta
+        if (streamId === null) {
+          if (streamed.trim()) streamId = addMessage('assistant', streamed.trim())
+        } else {
+          updateMessage(streamId, streamed.trim())
+        }
+        speech?.push(delta)
+      }
+
       try {
-        const reply = await respond(text)
+        const reply = await respond(text, onText)
         if (turn !== turnRef.current) return // a newer request or Stop superseded this one
-        addMessage('assistant', reply)
-        if (speakRepliesRef.current && outputRef.current) {
-          setState('speaking')
-          await playSpeech(reply)
+        if (streamId === null) addMessage('assistant', reply)
+        else updateMessage(streamId, reply)
+        if (speech) {
+          if (!streamed.trim()) speech.push(reply) // the demo responder answers in one piece
+          await speech.finish()
         }
       } catch (err) {
+        controller?.abort()
         if (turn === turnRef.current) {
           const message = `Response failed: ${(err as Error).message}`
           addMessage('system', message)
           showError(message)
         }
       } finally {
+        if (controller && speechAbortRef.current === controller) {
+          speechAbortRef.current = null
+          setSpeaking(false)
+        }
         if (turn === turnRef.current) setState((s) => (s === 'listening' || s === 'error' ? s : 'idle'))
       }
     },
-    [addMessage, respond, stopSpeaking, playSpeech, showError],
+    [addMessage, updateMessage, respond, stopSpeaking, showError],
   )
 
   // The recognizer is created once, so it calls the latest submit through a ref.
@@ -550,7 +611,9 @@ export default function App({ respond, engine, model, link }: AppProps) {
       : state === 'thinking'
         ? transcribing
           ? 'Transcribing on this Mac…'
-          : 'Processing request…'
+          : progress.trim()
+            ? progress.trim()
+            : 'Processing request…'
         : state === 'speaking'
           ? 'Speaking… press Stop speaking or Esc.'
           : micUnavailableReason
@@ -660,6 +723,15 @@ export default function App({ respond, engine, model, link }: AppProps) {
               <dt>Response engine</dt>
               <dd className={isDemo ? 'warn' : 'ok'}>{isDemo ? 'Demo (offline)' : `Claude${model ? ` · ${model.replace(/^claude-/, '')}` : ''}`}</dd>
             </div>
+            {lastTiming && (
+              <div>
+                <dt>Last reply</dt>
+                <dd title={lastTiming.first !== null ? `First words after ${(lastTiming.first / 1000).toFixed(1)} s` : undefined}>
+                  {(lastTiming.total / 1000).toFixed(1)} s
+                  {lastTiming.first !== null ? ` · first words ${(lastTiming.first / 1000).toFixed(1)} s` : ''}
+                </dd>
+              </div>
+            )}
             <div>
               <dt>Voice input</dt>
               <dd className={micSupported && !micBlocked ? 'ok' : 'warn'} title={micUnavailableReason ?? undefined}>
