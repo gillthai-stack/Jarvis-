@@ -24,6 +24,11 @@ It uses Claude through the Anthropic API.
   show notifications, and run your Apple Shortcuts.
 - **Show its work:** the Activity panel shows every tool call, its result, and a summary of Claude's thinking.
 
+## Holographic interface (preview)
+
+`hud/` holds a separate React + Three.js holographic interface with voice in and out. It runs on its own
+with demo replies and is not connected to Claude yet. See [hud/README.md](hud/README.md).
+
 ## Setup on your Mac
 
 You need Python 3.10 or newer (`python3 --version`; install it from python.org if needed) and an
