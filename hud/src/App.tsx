@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { createAudioFrame, createMicMeter, type AudioFrame } from './audio'
 import JarvisCore from './core/JarvisCore'
 import type { Responder } from './demoResponder'
 import { STATE_LABEL, type AssistantState, type ChatMessage, type MessageRole } from './types'
@@ -17,6 +18,8 @@ export interface AppProps {
   respond: Responder
   /** 'demo' shows the demo-mode labels. Only switch to 'claude' once a real Claude responder is passed in. */
   engine: 'demo' | 'claude'
+  /** The Claude model the Jarvis server is using, when connected. */
+  model?: string
 }
 
 const SPEAK_PREF_KEY = 'jarvis-hud-speak-replies'
@@ -74,7 +77,7 @@ function readSpeakPref() {
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
 
-export default function App({ respond, engine }: AppProps) {
+export default function App({ respond, engine, model }: AppProps) {
   const [state, setState] = useState<AssistantState>('idle')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -92,6 +95,9 @@ export default function App({ respond, engine }: AppProps) {
   const startedAt = useRef(Date.now())
 
   const energyRef = useRef(0)
+  const audioRef = useRef<AudioFrame>(createAudioFrame())
+  const micMeter = useMemo(() => createMicMeter(audioRef.current), [])
+  const [micLevelLive, setMicLevelLive] = useState(false)
   const turnRef = useRef(0)
   const nextId = useRef(1)
   const recognizerRef = useRef<Recognizer | null>(null)
@@ -180,6 +186,26 @@ export default function App({ respond, engine }: AppProps) {
     return () => recognizer?.abort()
   }, [])
 
+  // While listening, also open the mic through Web Audio so the waveform follows your voice.
+  // If that fails (permission, or a browser that won't share the mic twice) the visuals fall back
+  // to a simulated level and speech recognition carries on regardless.
+  useEffect(() => {
+    if (state !== 'listening') {
+      micMeter.stop()
+      setMicLevelLive(false)
+      return
+    }
+    let cancelled = false
+    void micMeter.start().then((ok) => {
+      if (!cancelled) setMicLevelLive(ok)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [state, micMeter])
+
+  useEffect(() => () => micMeter.stop(), [micMeter])
+
   const startListening = useCallback(() => {
     const recognizer = recognizerRef.current
     if (!recognizer) return
@@ -266,11 +292,16 @@ export default function App({ respond, engine }: AppProps) {
 
         <div className="topbar-right">
           {isDemo ? (
-            <span className="engine-badge engine-demo" title="Replies are canned demo text. The Claude API is not connected.">
+            <span
+              className="engine-badge engine-demo"
+              title="Replies are canned demo text. Start the Jarvis server (./start.sh) and reload this page to use Claude."
+            >
               Demo mode · Claude API not connected
             </span>
           ) : (
-            <span className="engine-badge engine-live">Claude connected</span>
+            <span className="engine-badge engine-live" title={model ? `Model: ${model}` : undefined}>
+              Claude · via Jarvis server
+            </span>
           )}
           <time className="clock" dateTime={now.toISOString()}>
             <span className="clock-time">{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
@@ -286,10 +317,13 @@ export default function App({ respond, engine }: AppProps) {
 
       <main className="main">
         <section className="core-stage" aria-label={`Holographic core, currently ${STATE_LABEL[state].toLowerCase()}`}>
-          <JarvisCore state={state} energyRef={energyRef} reducedMotion={reducedMotion} onFps={setFps} />
-          <div className="core-caption" aria-hidden="true">
-            {STATE_LABEL[state].toUpperCase()}
-          </div>
+          <JarvisCore
+            state={state}
+            energyRef={energyRef}
+            audioRef={audioRef}
+            reducedMotion={reducedMotion}
+            onFps={setFps}
+          />
         </section>
 
         <aside className="panel panel-left" aria-labelledby="telemetry-title">
@@ -303,7 +337,7 @@ export default function App({ respond, engine }: AppProps) {
             </div>
             <div>
               <dt>Response engine</dt>
-              <dd className={isDemo ? 'warn' : 'ok'}>{isDemo ? 'Demo (offline)' : 'Claude'}</dd>
+              <dd className={isDemo ? 'warn' : 'ok'}>{isDemo ? 'Demo (offline)' : `Claude${model ? ` · ${model.replace(/^claude-/, '')}` : ''}`}</dd>
             </div>
             <div>
               <dt>Voice input</dt>
@@ -319,6 +353,12 @@ export default function App({ respond, engine }: AppProps) {
               <dt>Voice</dt>
               <dd className="truncate" title={voiceName ?? undefined}>
                 {voiceName ?? '—'}
+              </dd>
+            </div>
+            <div>
+              <dt>Waveform</dt>
+              <dd className={micLevelLive ? 'ok' : undefined}>
+                {micLevelLive ? 'Mic (live)' : state === 'speaking' ? 'Speech rhythm' : 'Simulated'}
               </dd>
             </div>
             <div>
