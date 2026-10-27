@@ -165,10 +165,11 @@ TOOLS = {
     "recall": tool(recall, "List everything saved to long-term memory."),
 }
 
-from . import google_tools, mac_tools  # noqa: E402  (register their tools)
+from . import google_tools, mac_tools, obsidian  # noqa: E402  (register their tools)
 
 TOOLS.update(google_tools.tools(tool))
 TOOLS.update(mac_tools.tools(tool))
+TOOLS.update(obsidian.tools(tool))
 
 PY_TYPES = {"string": str, "boolean": bool, "integer": int, "array": list}
 
