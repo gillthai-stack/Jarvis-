@@ -11,7 +11,7 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 
-from . import config
+from . import config, memory
 
 MAX_RESULTS = 25
 MAX_READ_CHARS = 20_000
@@ -28,7 +28,6 @@ TEXT_SUFFIXES = {
     ".txt", ".md", ".markdown", ".csv", ".json", ".yaml", ".yml", ".py", ".js", ".ts",
     ".html", ".css", ".log", ".rtf", ".xml", ".ini", ".toml", ".sh",
 }
-MEMORY_FILE = config.DATA_DIR / "memory.json"
 
 
 def _allowed(path: Path) -> bool:
@@ -182,27 +181,30 @@ def open_app(args: dict) -> str:
     return f"Opened {name}."
 
 
-def load_memory() -> list:
-    try:
-        notes = json.loads(MEMORY_FILE.read_text()) if MEMORY_FILE.exists() else []
-    except ValueError:
-        return []
-    return notes if isinstance(notes, list) else []
-
-
-_load_memory = load_memory
-
-
 def remember(args: dict) -> str:
-    notes = _load_memory()
-    notes.append({"note": args["note"], "saved": datetime.now().strftime("%Y-%m-%d %H:%M")})
-    MEMORY_FILE.write_text(json.dumps(notes, indent=1))
-    return "Saved."
+    # Jarvis only suggests facts; the user keeps or discards each one in the HUD's Memory panel.
+    fact = memory.store.add_fact(args["note"], args.get("project"), source="assistant")
+    if fact["status"] == "approved":
+        return f"Already saved (fact {fact['id']})."
+    return (f"Suggested as fact {fact['id']}. It is kept only when the user presses Keep in the Memory panel, so "
+            "tell them it is waiting for their approval rather than saying it is saved.")
 
 
-def recall(_: dict) -> str:
-    notes = _load_memory()
-    return json.dumps(notes, indent=1) if notes else "No saved notes yet."
+def recall(args: dict) -> str:
+    facts = memory.store.list_facts(query=args.get("query"))
+    if not facts:
+        return "No saved facts" + (" match that." if args.get("query") else " yet.")
+    lines = [f"- [{f['project']}] {f['text']}" + (" (waiting for the user's approval)" if f["status"] == "pending" else "")
+             for f in facts]
+    return "\n".join(lines)
+
+
+def search_history(args: dict) -> str:
+    hits = memory.store.search_messages(args["query"], args.get("limit", 10))
+    if not hits:
+        return f"Nothing in past conversations matches '{args['query']}'."
+    return "\n".join(f"[{h['created'][:16].replace('T', ' ')}, conversation {h['conversation_id']}, "
+                     f"{'user' if h['role'] == 'user' else 'Jarvis'}] {h['text'][:400]}" for h in hits)
 
 
 def tool(fn, description, props=None, optional=()):
@@ -245,10 +247,27 @@ TOOLS = {
     ),
     "remember": tool(
         remember,
-        "Save a fact about the user or a task to long-term memory so it is available in later conversations.",
-        {"note": {"type": "string"}},
+        "Suggest a lasting fact about the user or one of their projects for long-term memory. The user approves it "
+        "in the Memory panel before it is kept. Never use this for passwords, API keys, card numbers, codes or other "
+        "secrets: they are refused.",
+        {"note": {"type": "string", "description": "The fact, in one short sentence"},
+         "project": {"type": "string", "description": "Project or area it belongs to, e.g. 'jarvis'. Default general"}},
+        optional=("project",),
     ),
-    "recall": tool(recall, "List everything saved to long-term memory (also listed in your instructions)."),
+    "recall": tool(
+        recall,
+        "List saved facts (approved ones are also in your instructions), optionally only those matching a query.",
+        {"query": {"type": "string", "description": "Words to look for"}},
+        optional=("query",),
+    ),
+    "search_history": tool(
+        search_history,
+        "Search earlier conversations with the user (what they asked and what you answered), newest first. Use it "
+        "when they refer to something discussed before.",
+        {"query": {"type": "string", "description": "Words to look for"},
+         "limit": {"type": "integer", "description": "Most results to return (default 10)"}},
+        optional=("limit",),
+    ),
 }
 
 from . import google_tools, mac_tools, obsidian  # noqa: E402  (register their tools)

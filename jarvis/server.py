@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import computer_use, config, google_tools, notes, obsidian, tools
+from . import computer_use, config, google_tools, memory_api, notes, obsidian, tools
 from .agent import Jarvis
 from .voice import api as voice_api
 
@@ -19,6 +19,9 @@ app = FastAPI(title="Jarvis")
 jarvis = Jarvis()
 # Local speech in and out (whisper.cpp and macOS `say`): /api/voice/...
 app.include_router(voice_api.router)
+# Facts and conversation history: review, edit, delete, export. /api/memory/...
+app.include_router(memory_api.router)
+memory_api.on_conversation_deleted.append(lambda cid: jarvis.forget_conversation(cid))
 
 
 @app.get("/")

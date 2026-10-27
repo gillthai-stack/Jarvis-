@@ -8,7 +8,7 @@ from typing import Awaitable, Callable
 
 import anthropic
 
-from . import computer_use, config, tools
+from . import computer_use, config, memory, tools
 
 Emit = Callable[[dict], Awaitable[None]]
 
@@ -25,7 +25,9 @@ open web pages and Mac apps, search the web, read Gmail, save Gmail drafts, see 
 save long-term notes, look at the user's screen, see their open browser tab, control music and volume, add Apple
 Reminders and Notes, show notifications, set timers, read and set the clipboard, and run their Apple Shortcuts.
 Use them instead of guessing. When the user tells you something worth remembering about themselves or their work,
-save it with the remember tool. Your saved notes are listed at the end of these instructions.
+suggest it with the remember tool; the user keeps or discards each suggestion, so say it is waiting for their
+approval. Never suggest passwords, keys, card numbers or other secrets. The facts the user approved are listed at the
+end of these instructions. When the user mentions something from an earlier conversation, use search_history.
 
 You cannot send email. When the user wants to send one, write it with gmail_draft and tell them it is waiting in
 their Drafts folder. Only add calendar events the user asked for, and confirm the time back to them.
@@ -77,13 +79,15 @@ REQUEST_LOG = config.DATA_DIR / "requests.jsonl"
 MAX_SAVED_NOTES = 200
 
 
-def system_prompt() -> str:
-    """The instructions plus the user's saved notes, fixed for one conversation so the prompt cache holds."""
-    notes = tools.load_memory()[-MAX_SAVED_NOTES:]
-    if not notes:
-        return SYSTEM_PROMPT + "\n\nSaved notes about the user: none yet."
-    lines = "\n".join(f"- {n.get('note', '')} (saved {n.get('saved', '?')})" for n in notes if isinstance(n, dict))
-    return SYSTEM_PROMPT + "\n\nSaved notes about the user (from earlier conversations):\n" + lines
+def system_prompt(store: memory.MemoryStore | None = None) -> str:
+    """The instructions plus the facts the user approved, fixed for one conversation so the prompt cache holds.
+    Suggestions still waiting for approval are left out."""
+    facts = (store or memory.store).approved_facts()[-MAX_SAVED_NOTES:]
+    if not facts:
+        return SYSTEM_PROMPT + "\n\nSaved facts about the user: none yet."
+    lines = "\n".join(f"- {f['text']}" + (f" [{f['project']}]" if f["project"] != memory.DEFAULT_PROJECT else "")
+                      for f in facts)
+    return SYSTEM_PROMPT + "\n\nSaved facts about the user (approved by them):\n" + lines
 
 
 def _stamp(text: str) -> list[dict]:
@@ -110,9 +114,12 @@ def _server_tools(model: str) -> list[dict]:
 
 class Jarvis:
     def __init__(self, client: anthropic.AsyncAnthropic | None = None,
-                 computer: computer_use.ComputerUse | None = None):
+                 computer: computer_use.ComputerUse | None = None, store: memory.MemoryStore | None = None):
         self.client = client or anthropic.AsyncAnthropic()
         self.computer = computer or computer_use.ComputerUse()
+        self.memory = store or memory.store
+        # The conversation this session's exchanges are saved under; a new one starts on reset.
+        self.conversation_id: int | None = None
         self.messages: list = []
         self.model = config.DEFAULT_MODEL
         self.effort = config.DEFAULT_EFFORT
@@ -125,12 +132,18 @@ class Jarvis:
     def reset(self):
         self.messages = []
         self.system = None
+        self.conversation_id = None
+
+    def forget_conversation(self, conversation_id: int) -> None:
+        """The user deleted this conversation from history: drop it from the live context as well."""
+        if conversation_id == self.conversation_id:
+            self.reset()
 
     async def ask(self, text: str, emit: Emit) -> None:
         async with self.lock:
             start = len(self.messages)
             if not self.messages or self.system is None:
-                self.system = system_prompt()
+                self.system = system_prompt(self.memory)
             self.messages.append({"role": "user", "content": _stamp(text)})
             await self.computer.begin_task(text, emit)
             error = None
@@ -158,9 +171,23 @@ class Jarvis:
                 # Drop the failed exchange so the next question starts from a valid history.
                 del self.messages[start:]
                 await emit({"type": "error", "message": error})
+            if not error and not cancelled:
+                await self._save_exchange(text, start)
             await self.computer.finish_task(error, cancelled)
             await self._report_timing(text, emit, error, cancelled)
             await emit({"type": "done"})
+
+    async def _save_exchange(self, text: str, start: int) -> None:
+        """Writes the finished exchange to searchable history (secrets masked). Tool calls are not kept."""
+        reply = " ".join(
+            b.text for m in self.messages[start:] if m["role"] == "assistant"
+            for b in m["content"] if getattr(b, "type", None) == "text" and b.text.strip()
+        )
+        try:
+            self.conversation_id = await asyncio.to_thread(
+                self.memory.add_exchange, self.conversation_id, text, reply)
+        except Exception as e:  # history is a convenience; never fail the reply over it
+            print(f"Couldn't save to conversation history: {e}")
 
     async def _report_timing(self, text: str, emit: Emit, error: str | None, cancelled: bool) -> None:
         t = self.timing
@@ -170,7 +197,7 @@ class Jarvis:
                     "first_text_ms": round(first * 1000) if first is not None else None, "steps": t["steps"]})
         # A local record of how each request went, so slow or failing requests can be found later.
         log_request({
-            "time": datetime.now().astimezone().isoformat(timespec="seconds"), "request": text[:200],
+            "time": datetime.now().astimezone().isoformat(timespec="seconds"), "request": memory.redact(text)[:200],
             "model": self.model, "effort": self.effort, "fast": self.fast, "seconds": round(total, 2),
             "first_text_seconds": round(first, 2) if first is not None else None, "steps": t["steps"],
             "tools": t["tools"], "error": error, "cancelled": cancelled,
@@ -276,6 +303,10 @@ class Jarvis:
                     output = await asyncio.to_thread(tools.run_tool, block.name, block.input)
                 except Exception as e:  # report tool failures back to Claude instead of crashing
                     error = str(e)
+                else:
+                    if block.name == "remember":
+                        # The Memory panel shows the new suggestion with Keep and Discard.
+                        await emit({"type": "memory_changed"})
         if error:
             await emit({"type": "tool_result", "id": block.id, "name": block.name, "ok": False, "output": error})
             return {"type": "tool_result", "tool_use_id": block.id, "is_error": True, "content": error}

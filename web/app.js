@@ -219,7 +219,7 @@ function showAction(ev) {
 const LABELS = {
   get_time: "Checking the time", search_files: "Searching files", read_file: "Reading a file",
   open_url: "Opening a web page", open_app: "Opening an app", remember: "Saving to memory",
-  recall: "Checking memory", web_search: "Searching the web", web_fetch: "Reading a web page",
+  recall: "Checking memory", search_history: "Searching past conversations", web_search: "Searching the web", web_fetch: "Reading a web page",
   gmail_search: "Searching Gmail", gmail_read: "Reading an email", gmail_draft: "Writing a Gmail draft",
   calendar_events: "Checking the calendar", calendar_create: "Adding a calendar event",
   look_at_screen: "Looking at your screen", browser_tab: "Checking your browser", media_control: "Controlling music",
