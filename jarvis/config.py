@@ -98,6 +98,22 @@ def desktop_token() -> str:
     raise RuntimeError(f"{DESKTOP_TOKEN_FILE} is empty. Delete it and restart Jarvis.")
 
 
+# ---------- local voice (whisper.cpp in, macOS `say` out) ----------
+
+# Built by scripts/install_whisper.sh. Absolute paths only: Jarvis never looks programs up on PATH for voice.
+VENDOR_DIR = ROOT / "vendor"
+WHISPER_BIN = Path(os.getenv("JARVIS_WHISPER_BIN", VENDOR_DIR / "whisper.cpp/build/bin/whisper-cli")).expanduser()
+WHISPER_MODEL = Path(os.getenv("JARVIS_WHISPER_MODEL", VENDOR_DIR / "whisper.cpp/models/ggml-base.en.bin")).expanduser()
+WHISPER_LANGUAGE = os.getenv("JARVIS_WHISPER_LANGUAGE", "en")
+WHISPER_THREADS = max(1, min(16, int(os.getenv("JARVIS_WHISPER_THREADS", "4"))))
+# "say" (macOS, built in) or "piper" (install separately, then set the two PIPER settings).
+TTS_ENGINE = os.getenv("JARVIS_TTS", "say").strip().lower()
+SAY_BIN = Path(os.getenv("JARVIS_SAY_BIN", "/usr/bin/say"))
+SAY_VOICE = os.getenv("JARVIS_SAY_VOICE", "").strip()  # empty = the Mac's system voice
+SAY_RATE = int(os.getenv("JARVIS_SAY_RATE", "0") or 0)  # words per minute; 0 = system default
+PIPER_BIN = Path(os.getenv("JARVIS_PIPER_BIN", VENDOR_DIR / "piper/piper")).expanduser()
+PIPER_MODEL = Path(os.getenv("JARVIS_PIPER_MODEL", VENDOR_DIR / "piper/voice.onnx")).expanduser()
+
 # Browser pages allowed to open the /ws socket. Without this check any website you visit could
 # connect to Jarvis on 127.0.0.1 and drive it (including approving actions).
 ALLOWED_ORIGINS = {

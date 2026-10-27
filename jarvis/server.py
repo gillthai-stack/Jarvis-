@@ -10,12 +10,15 @@ from fastapi.staticfiles import StaticFiles
 
 from . import computer_use, config, google_tools, notes, obsidian, tools
 from .agent import Jarvis
+from .voice import api as voice_api
 
 WEB_DIR = config.ROOT / "web"
 HUD_DIR = config.ROOT / "hud" / "dist"
 
 app = FastAPI(title="Jarvis")
 jarvis = Jarvis()
+# Local speech in and out (whisper.cpp and macOS `say`): /api/voice/...
+app.include_router(voice_api.router)
 
 
 @app.get("/")
@@ -77,6 +80,15 @@ async def note(id: str):
     except (FileNotFoundError, obsidian.NoVault):
         result["obsidian_url"] = None
     return result
+
+
+@app.get("/api/health")
+async def health():
+    """A quick check that the server is up, and which local voice engines are ready."""
+    return {
+        "ok": True,
+        "voice": {"stt": voice_api.transcriber.status()["available"], "tts": voice_api.speaker.status()["available"]},
+    }
 
 
 @app.get("/api/config")

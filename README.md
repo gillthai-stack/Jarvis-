@@ -5,7 +5,8 @@ It uses Claude through the Anthropic API.
 
 ## What it can do
 
-- **Talk:** hold the mic button to speak, or turn on hands-free and say "Jarvis, …". Replies are read aloud.
+- **Talk:** press the mic in the holographic interface and speak. Speech is recognised on your Mac by whisper.cpp
+  and replies are spoken by macOS `say`, so your voice never leaves the Mac. See [Local voice](#local-voice).
 - **Switch brains:** pick Claude Opus 5.5, Sonnet 5.5 or Haiku 5.5, and how hard it should think (effort).
 - **Search and read your files** in the folders you allow (Documents, Desktop and Downloads by default), including PDFs.
 - **Search the web** and read web pages.
@@ -52,6 +53,29 @@ For more natural voices, open System Settings, then Accessibility, then Spoken C
 download an "Enhanced" or "Premium" voice, and restart your browser. Safari picks up Premium voices more reliably than Chrome.
 
 To connect Gmail and Calendar, follow [docs/google-setup.md](docs/google-setup.md) (about ten minutes, once).
+
+### Local voice
+
+The holographic interface (`/hud/`) recognises speech with [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
+and speaks with macOS `say`, both on your Mac. Install whisper.cpp once (about 5 minutes; it needs Apple's command
+line tools, `xcode-select --install`, but not Homebrew):
+
+```bash
+cd ~/jarvis
+./scripts/install_whisper.sh     # builds whisper.cpp into vendor/ and downloads the base.en model (142 MB)
+./start.sh
+```
+
+Then open http://127.0.0.1:8765/hud/, press the mic and allow microphone access. Recording stops when you pause.
+Spoken requests go through exactly the same route as typed ones, so desktop actions still wait for you to press
+**Approve**; saying "approve" does not approve anything. Check it's ready at http://127.0.0.1:8765/api/health.
+
+What stays offline: microphone audio, transcription and the spoken voice. Recordings and reply text exist only in a
+private temporary folder for one request and are never logged. What needs the internet: Claude's answers (the
+Anthropic API), web search, Gmail and Calendar.
+
+To use Piper instead of `say` later, install it and set `JARVIS_TTS=piper`, `JARVIS_PIPER_BIN` and
+`JARVIS_PIPER_MODEL` in `.env`. The classic dashboard at `/` still uses the browser's own speech.
 
 ### Mac permissions
 
@@ -104,6 +128,10 @@ It cannot yet press keys such as Enter, Tab or shortcuts, drag, scroll, or use a
 | `JARVIS_PORT` | Dashboard port (default 8765) |
 | `JARVIS_SANDBOX_DIR` | The only folder whose files Jarvis may move (default `~/JARVIS-Sandbox`) |
 | `JARVIS_DESKTOP_PORT` | Port of the local desktop-control service (default 8766, always `127.0.0.1`) |
+| `JARVIS_WHISPER_BIN` / `JARVIS_WHISPER_MODEL` | whisper-cli and model paths (default: what `scripts/install_whisper.sh` builds in `vendor/`) |
+| `JARVIS_WHISPER_THREADS` | CPU threads for transcription (default 4) |
+| `JARVIS_TTS` | `say` (default) or `piper` |
+| `JARVIS_SAY_VOICE` / `JARVIS_SAY_RATE` | A voice from `say -v '?'` and words per minute. Empty uses your Mac's system voice |
 
 Jarvis only listens on `127.0.0.1`, so nothing outside your Mac can reach it.
 
@@ -119,6 +147,7 @@ Jarvis only listens on `127.0.0.1`, so nothing outside your Mac can reach it.
 - `jarvis/desktop_api.py` is the local desktop-control service (screenshots, clicks, typing).
 - `jarvis/sandbox.py` plans, checks and runs file moves inside the sandbox folder.
 - `jarvis/notes.py` builds the knowledge graph from your notes folder.
+- `jarvis/voice/` is local voice: `stt.py` (whisper.cpp), `tts.py` (`say`, or Piper) and `api.py` (the `/api/voice/` routes).
 - `jarvis/server.py` is a FastAPI server that serves the dashboard and talks to it over a WebSocket.
 - `web/` is the dashboard (plain HTML, CSS and JavaScript, with no build step). Voice uses the browser's built-in
   speech recognition and speech synthesis. The 3D graph uses
