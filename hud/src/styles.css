@@ -28,6 +28,7 @@
 .app.state-completed { --accent: #4ade80; }
 .app.state-failed { --accent: #f87171; }
 .app.state-cancelled { --accent: #94a3b8; }
+.app.state-error { --accent: #ef4444; }
 
 *,
 *::before,
@@ -239,6 +240,7 @@ input {
 .state-chip-awaiting_approval .state-dot { animation-duration: 1.4s; }
 .state-chip-executing .state-dot { animation-duration: 0.3s; }
 .state-chip-verifying .state-dot { animation-duration: 0.6s; }
+.state-chip-error .state-dot { animation-duration: 0.5s; }
 
 .topbar-right {
   display: flex;
@@ -259,6 +261,71 @@ input {
   color: var(--warn);
   border: 1px solid rgba(251, 191, 36, 0.5);
   background: rgba(251, 191, 36, 0.08);
+}
+.indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 9px;
+  border-radius: 6px;
+  white-space: nowrap;
+  color: var(--text-dim);
+  border: 1px solid rgba(143, 183, 194, 0.35);
+}
+.indicator svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.indicator-live {
+  color: #fca5a5;
+  border-color: rgba(248, 113, 113, 0.7);
+  box-shadow: 0 0 10px rgba(248, 113, 113, 0.25);
+}
+.indicator-live::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f87171;
+  animation: breathe 0.9s ease-in-out infinite;
+}
+.indicator-off {
+  opacity: 0.75;
+}
+.indicator-blocked {
+  color: var(--warn);
+  border-color: rgba(251, 191, 36, 0.6);
+}
+.log-meta-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.log-speak {
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--cyan-soft);
+  background: transparent;
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.log-speak:hover {
+  background: rgba(34, 211, 238, 0.12);
+}
+.log-speak:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 1px;
 }
 .engine-live {
   color: var(--ok);

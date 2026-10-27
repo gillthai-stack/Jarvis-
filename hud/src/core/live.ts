@@ -29,6 +29,8 @@ export const STATE_STYLE: Record<AssistantState, StateStyle> = {
   completed: { color: '#4ade80', ringSpeed: 0.35, pulseRate: 1.4, pulseDepth: 0.03, orbitSpeed: 0.35, scanSpeed: 0.5, glow: 1.2, spread: 1.03 },
   failed: { color: '#f87171', ringSpeed: 0.18, pulseRate: 3.2, pulseDepth: 0.04, orbitSpeed: 0.2, scanSpeed: 0.3, glow: 1.1, spread: 0.97 },
   cancelled: { color: '#94a3b8', ringSpeed: 0.15, pulseRate: 0.9, pulseDepth: 0.015, orbitSpeed: 0.15, scanSpeed: 0.25, glow: 0.6, spread: 0.98 },
+  // Voice or chat problems (microphone blocked, transcription failed, no reply).
+  error: { color: '#ef4444', ringSpeed: 0.12, pulseRate: 4.2, pulseDepth: 0.045, orbitSpeed: 0.12, scanSpeed: 0.2, glow: 1.0, spread: 0.96 },
 }
 
 /** States that animate like active thought (fast scans, inner churn). */

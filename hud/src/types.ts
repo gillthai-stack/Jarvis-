@@ -1,6 +1,6 @@
 /**
- * States of the holographic core. The first four are the voice/chat states; the rest show
- * a computer-use task (screenshots, clicks, typing, file moves) as it goes through approval.
+ * States of the holographic core. The first four and `error` are the voice/chat states; the rest
+ * show a computer-use task (screenshots, clicks, typing, file moves) as it goes through approval.
  */
 export type AssistantState =
   | 'idle'
@@ -14,6 +14,7 @@ export type AssistantState =
   | 'completed'
   | 'failed'
   | 'cancelled'
+  | 'error'
 
 export type MessageRole = 'user' | 'assistant' | 'system'
 
@@ -36,6 +37,7 @@ export const STATE_LABEL: Record<AssistantState, string> = {
   completed: 'Completed',
   failed: 'Failed',
   cancelled: 'Cancelled',
+  error: 'Error',
 }
 
 /** The task states the Jarvis server reports (agent_state events). */

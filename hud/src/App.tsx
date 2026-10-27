@@ -3,6 +3,14 @@ import { createAudioFrame, createMicMeter, type AudioFrame } from './audio'
 import JarvisCore from './core/JarvisCore'
 import type { Responder } from './demoResponder'
 import type { JarvisLink, ServerEvent } from './jarvisResponder'
+import {
+  createBrowserSpeech,
+  createLocalRecognizer,
+  createLocalSpeech,
+  fetchVoiceStatus,
+  type SpeechOutput,
+  type VoiceStatus,
+} from './localVoice'
 import OpsPanel from './ops/OpsPanel'
 import {
   AGENT_TO_CORE,
@@ -21,9 +29,9 @@ import {
   isSynthesisSupported,
   loadVoices,
   pickDefaultVoice,
-  speak,
   type Recognizer,
 } from './voice'
+import { isMicCaptureSupported } from './recorder'
 
 export interface AppProps {
   respond: Responder
@@ -41,6 +49,34 @@ const MAX_ACTIONS = 50
 const FINAL_STATE_MS = 6000
 
 const SPEAK_PREF_KEY = 'jarvis-hud-speak-replies'
+/** How long the core shows ERROR before settling back to standby. */
+const ERROR_STATE_MS = 5000
+
+type MicPermission = 'granted' | 'denied' | 'prompt' | 'unknown'
+
+/** Tracks the browser's microphone permission where the Permissions API supports it. */
+function useMicPermission(): [MicPermission, (p: MicPermission) => void] {
+  const [permission, setPermission] = useState<MicPermission>('unknown')
+  useEffect(() => {
+    let status: PermissionStatus | null = null
+    let cancelled = false
+    const update = () => status && setPermission(status.state as MicPermission)
+    navigator.permissions
+      ?.query({ name: 'microphone' as PermissionName })
+      .then((s) => {
+        if (cancelled) return
+        status = s
+        update()
+        s.addEventListener('change', update)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+      status?.removeEventListener('change', update)
+    }
+  }, [])
+  return [permission, setPermission]
+}
 
 function usePrefersReducedMotion() {
   const [reduced, setReduced] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
@@ -93,8 +129,6 @@ function readSpeakPref() {
   }
 }
 
-const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
-
 export default function App({ respond, engine, model, link }: AppProps) {
   const [state, setState] = useState<AssistantState>('idle')
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -107,9 +141,23 @@ export default function App({ respond, engine, model, link }: AppProps) {
   const [agent, setAgent] = useState<AgentStatus | null>(null)
   const [actions, setActions] = useState<AgentAction[]>([])
   const [screenshots, setScreenshots] = useState<ScreenshotFrame[]>([])
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null)
+  const [transcribing, setTranscribing] = useState(false)
+  const [speaking, setSpeaking] = useState(false)
+  const [listenStartedAt, setListenStartedAt] = useState(0)
+  const [micPermission, setMicPermission] = useMicPermission()
 
-  const micSupported = useMemo(isRecognitionSupported, [])
-  const ttsSupported = useMemo(isSynthesisSupported, [])
+  // With the Jarvis server, speech is recognised locally by whisper.cpp and replies are spoken by
+  // macOS `say`. The browser's speech recognition (which in Chrome sends audio to Google) is only
+  // used in demo mode.
+  const localStt = engine === 'claude' && !!voiceStatus?.stt.available
+  const localTts = engine === 'claude' && !!voiceStatus?.tts.available
+  const browserTts = useMemo(isSynthesisSupported, [])
+  const micSupported = useMemo(
+    () => (engine === 'demo' ? isRecognitionSupported() : localStt && isMicCaptureSupported()),
+    [engine, localStt],
+  )
+  const ttsSupported = localTts || browserTts
   const reducedMotion = usePrefersReducedMotion()
   const now = useNow()
   const online = useOnline()
@@ -125,27 +173,116 @@ export default function App({ respond, engine, model, link }: AppProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const logEndRef = useRef<HTMLDivElement>(null)
   const voiceRef = useRef<SpeechSynthesisVoice | null>(null)
+  const outputRef = useRef<SpeechOutput | null>(null)
+  const speechAbortRef = useRef<AbortController | null>(null)
+  const speakRepliesRef = useRef(speakReplies)
+  const errorTimerRef = useRef(0)
 
   const addMessage = useCallback((role: MessageRole, text: string) => {
     setMessages((prev) => [...prev, { id: nextId.current++, role, text, time: new Date() }])
   }, [])
 
+  /** Shows a problem in the status line and turns the core red for a few seconds. */
+  const showError = useCallback((message: string) => {
+    setNotice(message)
+    setState('error')
+    window.clearTimeout(errorTimerRef.current)
+    errorTimerRef.current = window.setTimeout(() => setState((s) => (s === 'error' ? 'idle' : s)), ERROR_STATE_MS)
+  }, [])
+  useEffect(() => () => window.clearTimeout(errorTimerRef.current), [])
+
+  // Which local voice engines the server has (whisper.cpp model installed, `say` present).
   useEffect(() => {
-    if (!ttsSupported) return
+    if (engine !== 'claude') return
+    let cancelled = false
+    void fetchVoiceStatus().then((status) => {
+      if (!cancelled) setVoiceStatus(status)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [engine])
+
+  useEffect(() => {
+    if (localTts) {
+      setVoiceName(voiceStatus?.tts.voice ? `${voiceStatus.tts.voice} · ${voiceStatus.tts.engine}` : voiceStatus?.tts.engine ?? null)
+      return
+    }
+    if (!browserTts) return
+    let cancelled = false
     loadVoices().then((voices) => {
+      if (cancelled) return
       voiceRef.current = pickDefaultVoice(voices)
       setVoiceName(voiceRef.current?.name ?? null)
     })
-  }, [ttsSupported])
+    return () => {
+      cancelled = true
+    }
+  }, [browserTts, localTts, voiceStatus])
+
+  // Speech output: the server's local voice when available, else the browser's.
+  useEffect(() => {
+    const output = localTts ? createLocalSpeech(audioRef.current) : browserTts ? createBrowserSpeech(() => voiceRef.current) : null
+    outputRef.current = output
+    return () => {
+      speechAbortRef.current?.abort()
+      output?.dispose()
+      if (outputRef.current === output) outputRef.current = null
+    }
+  }, [localTts, browserTts])
+
+  /** Stops whatever is being spoken (or about to be) without touching the request itself. */
+  const stopSpeaking = useCallback(() => {
+    speechAbortRef.current?.abort()
+    speechAbortRef.current = null
+    outputRef.current?.stop()
+    cancelSpeech()
+    setSpeaking(false)
+    setState((s) => (s === 'speaking' ? 'idle' : s))
+  }, [])
+
+  /**
+   * Speaks text, first stopping anything already playing. A later call, Stop or a new request
+   * aborts this one, so a stale reply never starts playing after a newer one.
+   */
+  const playSpeech = useCallback(
+    async (text: string) => {
+      const output = outputRef.current
+      if (!output) return
+      speechAbortRef.current?.abort()
+      const controller = new AbortController()
+      speechAbortRef.current = controller
+      setSpeaking(true)
+      setState((s) => (s === 'idle' || s === 'error' ? 'speaking' : s))
+      try {
+        await output.speak(text, {
+          signal: controller.signal,
+          onBoundary: () => {
+            energyRef.current = 1
+          },
+        })
+      } catch (err) {
+        if (!controller.signal.aborted) showError(`Couldn't speak the reply: ${(err as Error).message}`)
+      } finally {
+        if (speechAbortRef.current === controller) {
+          speechAbortRef.current = null
+          setSpeaking(false)
+          setState((s) => (s === 'speaking' ? 'idle' : s))
+        }
+      }
+    },
+    [showError],
+  )
 
   useEffect(() => {
+    speakRepliesRef.current = speakReplies
     try {
       localStorage.setItem(SPEAK_PREF_KEY, speakReplies ? 'on' : 'off')
     } catch {
       /* storage unavailable; the toggle still works for this visit */
     }
-    if (!speakReplies) cancelSpeech()
-  }, [speakReplies])
+    if (!speakReplies) stopSpeaking()
+  }, [speakReplies, stopSpeaking])
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'end' })
@@ -216,33 +353,32 @@ export default function App({ respond, engine, model, link }: AppProps) {
     async (raw: string) => {
       const text = raw.trim()
       if (!text) return
+      // Typed and spoken requests both come through here, so they share one conversation
+      // and the same server route (and therefore the same approval rules for desktop actions).
       const turn = ++turnRef.current
-      cancelSpeech()
+      stopSpeaking() // a new request silences the previous reply
       setNotice('')
       addMessage('user', text)
       setState('thinking')
       try {
         const reply = await respond(text)
-        if (turn !== turnRef.current) return
+        if (turn !== turnRef.current) return // a newer request or Stop superseded this one
         addMessage('assistant', reply)
-        setState('speaking')
-        if (speakReplies && ttsSupported) {
-          await speak(reply, {
-            voice: voiceRef.current,
-            onBoundary: () => {
-              energyRef.current = 1
-            },
-          })
-        } else {
-          await wait(Math.min(2500, 500 + reply.length * 15))
+        if (speakRepliesRef.current && outputRef.current) {
+          setState('speaking')
+          await playSpeech(reply)
         }
       } catch (err) {
-        if (turn === turnRef.current) addMessage('system', `Response failed: ${(err as Error).message}`)
+        if (turn === turnRef.current) {
+          const message = `Response failed: ${(err as Error).message}`
+          addMessage('system', message)
+          showError(message)
+        }
       } finally {
-        if (turn === turnRef.current) setState((s) => (s === 'listening' ? s : 'idle'))
+        if (turn === turnRef.current) setState((s) => (s === 'listening' || s === 'error' ? s : 'idle'))
       }
     },
-    [addMessage, respond, speakReplies, ttsSupported],
+    [addMessage, respond, stopSpeaking, playSpeech, showError],
   )
 
   // The recognizer is created once, so it calls the latest submit through a ref.
@@ -252,27 +388,46 @@ export default function App({ respond, engine, model, link }: AppProps) {
   }, [submit])
 
   useEffect(() => {
-    const recognizer = createRecognizer({
-      onInterim: (text) => setInterim(text),
-      onFinal: (text) => {
+    const handlers = {
+      onStart: () => setMicPermission('granted'),
+      onInterim: (text: string) => setInterim(text),
+      onTranscribing: () => {
+        setTranscribing(true)
+        setState((s) => (s === 'listening' ? 'thinking' : s))
+      },
+      onFinal: (text: string) => {
         setInterim('')
+        setTranscribing(false)
+        // Exactly the same path as a typed message.
         void submitRef.current(text)
       },
-      onError: (message) => setNotice(message),
+      onError: (message: string, code: string) => {
+        setTranscribing(false)
+        if (code === 'denied' || code === 'not-allowed') setMicPermission('denied')
+        showError(message)
+      },
       onEnd: () => {
         setInterim('')
+        setTranscribing(false)
         setState((s) => (s === 'listening' ? 'idle' : s))
       },
-    })
+    }
+    const recognizer: Recognizer | null =
+      engine === 'claude'
+        ? localStt
+          ? createLocalRecognizer(handlers, audioRef.current)
+          : null
+        : createRecognizer(handlers)
     recognizerRef.current = recognizer
+    // Unmounting (or switching engines) stops the mic and drops any transcription in flight.
     return () => recognizer?.abort()
-  }, [])
+  }, [engine, localStt, showError, setMicPermission])
 
-  // While listening, also open the mic through Web Audio so the waveform follows your voice.
-  // If that fails (permission, or a browser that won't share the mic twice) the visuals fall back
-  // to a simulated level and speech recognition carries on regardless.
+  // The local recorder drives the waveform itself. With the browser recognizer, also open the mic
+  // through Web Audio so the waveform follows your voice. If that fails (permission, or a browser
+  // that won't share the mic twice) the visuals fall back to a simulated level.
   useEffect(() => {
-    if (state !== 'listening') {
+    if (state !== 'listening' || localStt) {
       micMeter.stop()
       setMicLevelLive(false)
       return
@@ -284,20 +439,22 @@ export default function App({ respond, engine, model, link }: AppProps) {
     return () => {
       cancelled = true
     }
-  }, [state, micMeter])
+  }, [state, micMeter, localStt])
 
   useEffect(() => () => micMeter.stop(), [micMeter])
 
   const startListening = useCallback(() => {
     const recognizer = recognizerRef.current
     if (!recognizer) return
+    outputRef.current?.prime() // inside the click, so Safari will let the reply play later
     turnRef.current++ // abandon any reply in progress
-    cancelSpeech()
+    stopSpeaking()
     setNotice('')
     setInterim('')
+    setListenStartedAt(Date.now())
     setState('listening')
     recognizer.start()
-  }, [])
+  }, [stopSpeaking])
 
   const stopListening = useCallback(() => {
     recognizerRef.current?.stop()
@@ -309,10 +466,11 @@ export default function App({ respond, engine, model, link }: AppProps) {
     turnRef.current++
     link?.cancel()
     recognizerRef.current?.abort()
-    cancelSpeech()
+    stopSpeaking()
     setInterim('')
+    setTranscribing(false)
     setState('idle')
-  }, [link])
+  }, [link, stopSpeaking])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -330,20 +488,26 @@ export default function App({ respond, engine, model, link }: AppProps) {
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault()
+    outputRef.current?.prime()
     const text = input
     setInput('')
     void submit(text)
   }
 
+  const speakMessage = (text: string) => {
+    outputRef.current?.prime()
+    void playSpeech(text)
+  }
+
   const isDemo = engine === 'demo'
-  const busy = state !== 'idle'
+  const busy = state !== 'idle' && state !== 'error'
 
   // The core shows the computer-use task state while one is running, and its outcome for a few
   // seconds afterwards. Listening always wins so voice input stays obvious.
   const agentLive = agent && !agent.final ? agent : null
   const agentRecent = agent && agent.final && agent.hadActions && now.getTime() - agent.at < FINAL_STATE_MS ? agent : null
   let coreState: AssistantState = state
-  if (state === 'listening') coreState = 'listening'
+  if (state === 'listening' || state === 'error') coreState = state
   else if (agentLive && (agentLive.state !== 'PLANNING' || agentLive.hadActions)) coreState = AGENT_TO_CORE[agentLive.state]
   else if (agentRecent && state !== 'thinking') coreState = AGENT_TO_CORE[agentRecent.state]
 
@@ -359,24 +523,39 @@ export default function App({ respond, engine, model, link }: AppProps) {
     completed: 30,
     failed: 22,
     cancelled: 12,
+    error: 20,
   }
   const pendingApproval = actions.some((a) => a.status === 'pending' && a.approvalToken)
+
+  const sttProblem =
+    engine === 'claude' && voiceStatus && !voiceStatus.stt.available
+      ? voiceStatus.stt.problem ?? 'Local speech recognition is not installed.'
+      : null
+  const micUnavailableReason = micSupported
+    ? null
+    : engine === 'claude'
+      ? voiceStatus
+        ? sttProblem ?? 'This browser cannot record from the microphone.'
+        : 'Checking local speech recognition…'
+      : 'Voice input is not supported in this browser (Chrome, Edge or Safari support it).'
+  const listenSeconds = state === 'listening' ? Math.max(0, Math.floor((now.getTime() - listenStartedAt) / 1000)) : 0
+  const micBlocked = micPermission === 'denied'
 
   const statusLine = notice
     ? notice
     : pendingApproval
-      ? 'An action is waiting for your approval in the Operations panel.'
+      ? 'An action is waiting for your approval in the Operations panel. Voice commands cannot approve it.'
       : state === 'listening'
-      ? interim || 'Listening… speak now.'
+      ? interim || (localStt ? 'Listening… speak now. I stop when you pause, or press the mic.' : 'Listening… speak now.')
       : state === 'thinking'
-        ? 'Processing request…'
+        ? transcribing
+          ? 'Transcribing on this Mac…'
+          : 'Processing request…'
         : state === 'speaking'
-          ? speakReplies && ttsSupported
-            ? 'Speaking… press Esc to stop.'
-            : 'Reply ready.'
-          : micSupported
-            ? 'Press the microphone or type a command. Press / to jump to the command line.'
-            : 'Voice input is not supported in this browser. Type a command instead (Chrome, Edge or Safari support voice).'
+          ? 'Speaking… press Stop speaking or Esc.'
+          : micUnavailableReason
+            ? `${micUnavailableReason} You can still type commands.`
+            : 'Press the microphone or type a command. Press / to jump to the command line.'
 
   return (
     <div className={`app state-${coreState}`}>
@@ -407,10 +586,44 @@ export default function App({ respond, engine, model, link }: AppProps) {
               Demo mode · Claude API not connected
             </span>
           ) : (
-            <span className="engine-badge engine-live" title={model ? `Model: ${model}` : undefined}>
+            <span
+              className="engine-badge engine-live"
+              title={`${model ? `Model: ${model}. ` : ''}Reasoning uses the Claude API over the internet; speech stays on this Mac.`}
+            >
               Claude · via Jarvis server
             </span>
           )}
+          <span
+            className={`indicator ${state === 'listening' ? 'indicator-live' : micBlocked ? 'indicator-blocked' : micSupported ? '' : 'indicator-off'}`}
+            title={micUnavailableReason ?? (micBlocked ? 'Microphone access is blocked for this page.' : undefined)}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Z" />
+              <path d="M19 11a7 7 0 0 1-14 0M12 18v3" fill="none" />
+              {(micBlocked || !micSupported) && <path d="M4 4l16 16" fill="none" />}
+            </svg>
+            {state === 'listening'
+              ? `Mic live ${Math.floor(listenSeconds / 60)}:${String(listenSeconds % 60).padStart(2, '0')}`
+              : micBlocked
+                ? 'Mic blocked'
+                : micSupported
+                  ? 'Mic off'
+                  : 'Mic unavailable'}
+          </span>
+          <span
+            className={`indicator ${speaking ? 'indicator-live' : speakReplies && ttsSupported ? '' : 'indicator-off'}`}
+            title={speakReplies ? 'Voice mode is on: replies are spoken.' : 'Muted: replies are not spoken.'}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M4 9v6h4l5 4V5L8 9H4Z" />
+              {speakReplies && ttsSupported ? (
+                <path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11" fill="none" />
+              ) : (
+                <path d="M16 9l5 6M21 9l-5 6" fill="none" />
+              )}
+            </svg>
+            {speaking ? 'Speaking' : speakReplies && ttsSupported ? 'Voice on' : 'Muted'}
+          </span>
           <time className="clock" dateTime={now.toISOString()}>
             <span className="clock-time">{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
             <span className="clock-date">{now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}</span>
@@ -449,12 +662,22 @@ export default function App({ respond, engine, model, link }: AppProps) {
             </div>
             <div>
               <dt>Voice input</dt>
-              <dd className={micSupported ? 'ok' : 'warn'}>{micSupported ? 'Ready' : 'Unsupported'}</dd>
+              <dd className={micSupported && !micBlocked ? 'ok' : 'warn'} title={micUnavailableReason ?? undefined}>
+                {micBlocked
+                  ? 'Mic blocked'
+                  : localStt
+                    ? `Local · ${voiceStatus?.stt.engine}`
+                    : micSupported
+                      ? 'Browser'
+                      : engine === 'claude' && voiceStatus
+                        ? 'Not installed'
+                        : 'Unavailable'}
+              </dd>
             </div>
             <div>
               <dt>Voice output</dt>
               <dd className={ttsSupported ? 'ok' : 'warn'}>
-                {ttsSupported ? (speakReplies ? 'On' : 'Muted') : 'Unsupported'}
+                {ttsSupported ? `${speakReplies ? 'On' : 'Muted'} · ${localTts ? 'local' : 'browser'}` : 'Unsupported'}
               </dd>
             </div>
             <div>
@@ -465,8 +688,14 @@ export default function App({ respond, engine, model, link }: AppProps) {
             </div>
             <div>
               <dt>Waveform</dt>
-              <dd className={micLevelLive ? 'ok' : undefined}>
-                {micLevelLive ? 'Mic (live)' : state === 'speaking' ? 'Speech rhythm' : 'Simulated'}
+              <dd className={micLevelLive || (localStt && state === 'listening') || (localTts && speaking) ? 'ok' : undefined}>
+                {micLevelLive || (localStt && state === 'listening')
+                  ? 'Mic (live)'
+                  : speaking
+                    ? localTts
+                      ? 'Voice (live)'
+                      : 'Speech rhythm'
+                    : 'Simulated'}
               </dd>
             </div>
             <div>
@@ -532,9 +761,16 @@ export default function App({ respond, engine, model, link }: AppProps) {
                 <div key={m.id} className={`log-entry log-${m.role}`}>
                   <div className="log-meta">
                     <span>{m.role === 'user' ? 'You' : m.role === 'assistant' ? (isDemo ? 'JARVIS · demo' : 'JARVIS') : 'System'}</span>
-                    <time dateTime={m.time.toISOString()}>
-                      {m.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </time>
+                    <span className="log-meta-right">
+                      {m.role === 'assistant' && ttsSupported && (
+                        <button type="button" className="log-speak" onClick={() => speakMessage(m.text)} aria-label="Speak this reply">
+                          Speak
+                        </button>
+                      )}
+                      <time dateTime={m.time.toISOString()}>
+                        {m.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </time>
+                    </span>
                   </div>
                   <p>{m.text}</p>
                 </div>
@@ -555,12 +791,12 @@ export default function App({ respond, engine, model, link }: AppProps) {
             type="button"
             className={`mic-button${state === 'listening' ? ' is-listening' : ''}`}
             onClick={toggleMic}
-            disabled={!micSupported}
+            disabled={!micSupported || (transcribing && state !== 'listening')}
             aria-pressed={state === 'listening'}
             aria-label={
-              !micSupported ? 'Voice input not supported in this browser' : state === 'listening' ? 'Stop listening' : 'Start listening'
+              !micSupported ? micUnavailableReason ?? 'Voice input unavailable' : state === 'listening' ? 'Stop listening and send' : 'Start listening'
             }
-            title={!micSupported ? 'Voice input is not supported in this browser' : undefined}
+            title={micUnavailableReason ?? (state === 'listening' ? 'Stop listening and send' : 'Start listening')}
           >
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Z" />
@@ -586,13 +822,18 @@ export default function App({ respond, engine, model, link }: AppProps) {
             Send
           </button>
 
+          {speaking && (
+            <button type="button" className="stop-button" onClick={stopSpeaking}>
+              Stop speaking
+            </button>
+          )}
           {busy && (
-            <button type="button" className="stop-button" onClick={stopEverything}>
+            <button type="button" className="stop-button" onClick={stopEverything} title="Stop listening, speaking and the current request (Esc)">
               Stop
             </button>
           )}
 
-          <label className={`toggle${ttsSupported ? '' : ' is-disabled'}`}>
+          <label className={`toggle${ttsSupported ? '' : ' is-disabled'}`} title="Speak replies aloud automatically">
             <input
               type="checkbox"
               checked={speakReplies && ttsSupported}
@@ -600,7 +841,7 @@ export default function App({ respond, engine, model, link }: AppProps) {
               onChange={(e) => setSpeakReplies(e.target.checked)}
             />
             <span className="toggle-track" aria-hidden="true" />
-            <span className="toggle-text">Voice replies</span>
+            <span className="toggle-text">Voice mode</span>
           </label>
         </form>
       </footer>

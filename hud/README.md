@@ -28,21 +28,28 @@ Add `?demo` to the address to force demo replies.
 
 ## Using it
 
-- Click the microphone (or tab to it and press Enter) and speak. Your words appear live, then JARVIS replies.
+- Click the microphone (or tab to it and press Enter) and speak. With the Jarvis server, recording stops
+  by itself when you pause (or press the mic again), whisper.cpp transcribes it on your Mac, and the words
+  go through exactly the same route as typed text. In demo mode the browser's speech recognition is used.
 - Or type in the command line and press Enter. Press `/` anywhere to jump to it.
-- Press `Esc` or the Stop button to stop listening or speaking.
-- Toggle **Voice replies** to mute spoken answers. The choice is remembered.
+- **Voice mode** (the toggle) speaks every reply automatically with macOS `say`. Turn it off to mute;
+  each reply still has a **Speak** button. The choice is remembered.
+- **Stop speaking** silences the current reply. `Esc` or **Stop** also stops listening and the request.
+- The top bar shows whether the microphone is live (with a timer), off or blocked, and whether voice is on or muted.
 - In demo mode, try "what time is it", "what's the date", "status report", "tell me a joke" or "help".
 
 The core is a layered, arc-reactor-style energy sphere with segmented orbital rings, radial markings,
 scanning arcs, orbiting particles, a circular audio waveform and a HUD reticle with live labels. It has
-four states: **idle** (dim, slow drift), **listening** (teal, brackets lock on, the waveform follows your
-real microphone level), **thinking** (rings counter-rotate fast, the reactor coils chase, particles draw in)
-and **speaking** (bright, the core flares in rhythm with the speech). Each change sends out a shockwave ring.
+voice states: **idle** (dim, slow drift), **listening** (teal, brackets lock on, the waveform follows your
+real microphone level), **thinking** (rings counter-rotate fast, the reactor coils chase, particles draw in;
+also shown while whisper.cpp transcribes), **speaking** (bright, the core flares with the voice) and
+**error** (red, for a blocked microphone, failed transcription or a failed reply; it settles back after a few
+seconds). Computer-use tasks add **awaiting approval**, **executing** and the other task states.
+Each change sends out a shockwave ring.
 
-Browsers don't let a page measure the audio that speech synthesis plays, so while JARVIS speaks the
-waveform follows word timing and a speech-like rhythm rather than the real output signal. The
-telemetry panel's **Waveform** row shows which source is in use.
+The local `say` voice plays through Web Audio, so while JARVIS speaks the waveform follows the real
+voice. With the browser's speech synthesis (demo mode) it follows word timing instead. The telemetry
+panel's **Waveform** row shows which source is in use.
 
 Bloom glow is on by default and switches itself off (with a lower render resolution) if your
 device can't hold a smooth frame rate. If your system asks for reduced motion, motion slows right
@@ -60,7 +67,9 @@ down, the parallax and expanding shockwave are switched off, and the CSS animati
 | `src/core/live.ts` | State styles and shared geometry helpers |
 | `src/audio.ts` | Microphone level meter (Web Audio) for the waveform |
 | `src/App.tsx` | The main application: dashboard layout, state machine, voice wiring |
-| `src/voice.ts` | Voice utilities: SpeechRecognition and speechSynthesis wrappers |
+| `src/voice.ts` | Browser voice (demo mode): SpeechRecognition and speechSynthesis wrappers |
+| `src/recorder.ts` | Records the mic as 16 kHz WAV for whisper.cpp, with pause detection and limits |
+| `src/localVoice.ts` | Local voice through the server: transcription, `say` playback, stop and stale-reply handling |
 | `src/demoResponder.ts` | The clearly labelled demo response handler |
 | `src/styles.css` | All styles, including the responsive layout |
 | `src/main.tsx` | Entry point; uses Claude via the Jarvis server when it is running, otherwise demo |

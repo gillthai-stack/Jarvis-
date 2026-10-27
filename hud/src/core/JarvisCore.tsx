@@ -59,14 +59,14 @@ function Controller({
     l.orbitPhase += dt * l.orbitSpeed
     l.pulse = Math.sin(l.phase) * l.pulseDepth
 
-    // Amplitude: the real microphone while listening, otherwise a believable envelope.
-    // speechSynthesis audio can't be measured by the page, so speaking uses word-boundary
-    // events plus a syllable-like rhythm.
+    // Amplitude: the real microphone while listening, and the real voice while speaking when it
+    // plays through Web Audio (the local `say` voice). The browser's speechSynthesis can't be
+    // measured by the page, so then speaking uses word-boundary events plus a syllable-like rhythm.
     energyRef.current = Math.max(0, energyRef.current - dt * 2.5)
     const audio = audioRef.current
     let amp: number
     let liveAmp = false
-    if (state === 'listening' && audio.live) {
+    if ((state === 'listening' || state === 'speaking') && audio.live) {
       amp = audio.level
       liveAmp = true
     } else if (state === 'speaking') {
