@@ -38,6 +38,10 @@ open -e .env        # paste your API key after ANTHROPIC_API_KEY=
 
 Use Chrome or Safari for voice. The first time you press the mic, allow microphone access.
 
+To change how Jarvis sounds, pick a voice and speed in the Voice panel. You hear a sample straight away, and your choice is saved.
+For more natural voices, open System Settings, then Accessibility, then Spoken Content. Click System Voice, then Manage Voices,
+download an "Enhanced" or "Premium" voice, and restart your browser. Safari picks up Premium voices more reliably than Chrome.
+
 To connect Gmail and Calendar, follow [docs/google-setup.md](docs/google-setup.md) (about ten minutes, once).
 
 ### Mac permissions
