@@ -2,7 +2,7 @@
 
 const $ = (id) => document.getElementById(id);
 const els = {
-  orb: $("orb"), status: $("status"), model: $("model"), effort: $("effort"), reset: $("reset"),
+  orb: $("orb"), status: $("status"), model: $("model"), effort: $("effort"), fast: $("fast"), reset: $("reset"),
   voice: $("voice"), rate: $("rate"),
   messages: $("messages"), empty: $("empty"), form: $("composer"), input: $("input"), send: $("send"),
   mic: $("mic"), handsfree: $("handsfree"), speak: $("speak"), heard: $("heard"),
@@ -42,6 +42,7 @@ async function loadConfig() {
   els.effort.innerHTML = cfg.efforts.map((e) => `<option>${e}</option>`).join("");
   els.model.value = cfg.model;
   els.effort.value = cfg.effort;
+  els.fast.checked = !!cfg.fast;
   els.toolinfo.innerHTML =
     `<p><strong>Tools:</strong> ${cfg.tools.join(", ")}</p>` +
     `<p><strong>Folders Jarvis can read:</strong><br>${cfg.search_dirs.join("<br>")}</p>` +
@@ -94,6 +95,7 @@ function handle(ev) {
       if (!current) current = addMessage("jarvis streaming", "");
       replyText += ev.text;
       current.textContent = replyText;
+      streamSpeech(ev.text);
       els.messages.scrollTop = els.messages.scrollHeight;
       setState("thinking", "Answering…");
       break;
@@ -107,7 +109,7 @@ function handle(ev) {
       toolItems.set(ev.id, item);
       setState("thinking", toolLabel(ev.name) + "…");
       // Text after a tool call starts a new paragraph.
-      if (current) { replyText += "\n\n"; }
+      if (current) { replyText += "\n\n"; streamSpeech("\n"); }
       break;
     }
     case "tool_input": {
@@ -130,14 +132,25 @@ function handle(ev) {
     case "error":
       addMessage("error", ev.message);
       break;
+    case "notice":
+      logItem("", "Note", ev.message);
+      break;
+    case "timing":
+      logItem("", "Response time", `${(ev.total_ms / 1000).toFixed(1)} s` +
+        (ev.first_text_ms != null ? ` (first words after ${(ev.first_text_ms / 1000).toFixed(1)} s)` : "") +
+        `, ${ev.steps} step${ev.steps === 1 ? "" : "s"}`);
+      break;
     case "done":
       busy = false;
       loadToday();
       els.send.disabled = false;
       if (current) current.classList.remove("streaming");
       current = null;
-      if (replyText.trim() && els.speak.checked) speak(replyText);
-      else { idleStatus(); resumeListening(); }
+      if (replyText.trim() && els.speak.checked && "speechSynthesis" in window) {
+        streamSpeech("", true);
+        speechFirst = true;
+        if (speechPending === 0) { idleStatus(); resumeListening(); }
+      } else { idleStatus(); resumeListening(); }
       break;
     case "action":
       showAction(ev);
@@ -158,7 +171,8 @@ function handle(ev) {
       break;
     case "settings":
       els.model.value = ev.model; els.effort.value = ev.effort;
-      logItem("", "Settings", `Brain: ${ev.model}, effort: ${ev.effort}`);
+      if (els.fast) els.fast.checked = !!ev.fast;
+      logItem("", "Settings", `Brain: ${ev.model}, effort: ${ev.effort}${ev.fast ? ", fast mode" : ""}`);
       break;
     case "reset":
       els.messages.querySelectorAll(".msg").forEach((m) => m.remove());
@@ -174,7 +188,9 @@ function describeAction(a) {
   const d = a.display || {};
   if (a.kind === "file_plan") return `${d.reason || ""}\n` + (d.moves || []).map((m) => `${m.source} → ${m.destination}`).join("\n");
   if (a.kind === "click") return `${d.clicks === 2 ? "Double-" : ""}${d.button} click on ${d.target} at (${d.x}, ${d.y}) in screenshot ${d.screenshot_id}`;
-  if (a.kind === "type") return `Type into ${d.target}:\n“${d.text}”`;
+  if (a.kind === "type") return `Type into ${d.target}:\n“${d.text}”` + (d.press_enter ? "\nthen press Enter" : "");
+  if (a.kind === "key") return `Press ${d.keys}: ${d.purpose}`;
+  if (a.kind === "scroll") return `Scroll ${d.lines > 0 ? "down" : "up"} ${Math.abs(d.lines)} lines in ${d.target} at (${d.x}, ${d.y})`;
   return a.summary;
 }
 function showAction(ev) {
@@ -274,18 +290,54 @@ function previewVoice() {
 
 function speak(text) {
   if (!("speechSynthesis" in window)) { idleStatus(); return; }
-  const plain = text.replace(/```[\s\S]*?```/g, " (code omitted) ").replace(/[*_#`>|]/g, "").replace(/\[(.*?)\]\(.*?\)/g, "$1");
+  speakPiece(text);
+}
+
+// Replies are spoken sentence by sentence as they stream in, instead of after the whole reply arrives.
+let speechBuffer = "";
+let speechPending = 0;
+let speechFirst = true;
+
+function speakPiece(text) {
+  const plain = text.replace(/```[\s\S]*?```/g, " (code omitted) ").replace(/[*_#`>|]/g, "").replace(/\[(.*?)\]\(.*?\)/g, "$1").trim();
+  if (!plain) return;
   const utter = new SpeechSynthesisUtterance(plain);
   const voice = chosenVoice();
   if (voice) utter.voice = voice;
   utter.rate = Number(els.rate.value) || 1.05;
   pauseListening();
-  setState("speaking", "Speaking…");
-  utter.onend = utter.onerror = () => { idleStatus(); resumeListening(); };
-  speechSynthesis.speak(utter);
+  speechPending += 1;
+  utter.onstart = () => setState("speaking", "Speaking…");
+  utter.onend = utter.onerror = () => {
+    speechPending = Math.max(0, speechPending - 1);
+    if (speechPending === 0 && !busy) { idleStatus(); resumeListening(); }
+  };
+  speechSynthesis.speak(utter);  // the browser queues utterances in order
 }
 
-function stopSpeaking() { if ("speechSynthesis" in window) speechSynthesis.cancel(); }
+function streamSpeech(delta, final = false) {
+  if (!("speechSynthesis" in window) || !els.speak.checked) return;
+  speechBuffer += delta;
+  for (;;) {
+    if ((speechBuffer.match(/```/g) || []).length % 2 === 1) break;  // wait for the end of a code block
+    const re = /[.!?…:]["'”’)\]]*(?=\s)|\n/g;
+    let cut = -1, m;
+    while ((m = re.exec(speechBuffer))) {
+      const end = m.index + m[0].length;
+      if (speechBuffer.slice(0, end).trim().length >= (speechFirst ? 1 : 60)) { cut = end; break; }
+    }
+    if (cut === -1) break;
+    speakPiece(speechBuffer.slice(0, cut));
+    speechBuffer = speechBuffer.slice(cut);
+    speechFirst = false;
+  }
+  if (final) { speakPiece(speechBuffer); speechBuffer = ""; }
+}
+
+function stopSpeaking() {
+  speechBuffer = ""; speechPending = 0; speechFirst = true;
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+}
 
 // ---------- speech input ----------
 
@@ -438,6 +490,7 @@ els.form.addEventListener("submit", (e) => { e.preventDefault(); ask(els.input.v
 els.empty.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => ask(b.textContent)));
 els.model.addEventListener("change", () => { savePref("model", els.model.value); send({ type: "set_model", model: els.model.value }); });
 els.effort.addEventListener("change", () => { savePref("effort", els.effort.value); send({ type: "set_effort", effort: els.effort.value }); });
+els.fast.addEventListener("change", () => send({ type: "set_fast", fast: els.fast.checked }));
 els.reset.addEventListener("click", () => { stopSpeaking(); send({ type: "reset" }); });
 if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = loadVoices;
 loadVoices();

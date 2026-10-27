@@ -7,8 +7,11 @@ It uses Claude through the Anthropic API.
 
 - **Talk:** press the mic in the holographic interface and speak. Speech is recognised on your Mac by whisper.cpp
   and replies are spoken by macOS `say`, so your voice never leaves the Mac. See [Local voice](#local-voice).
-- **Switch brains:** pick Claude Opus 5.5, Sonnet 5.5 or Haiku 5.5, and how hard it should think (effort).
-- **Search and read your files** in the folders you allow (Documents, Desktop and Downloads by default), including PDFs.
+- **Answer quickly:** replies are spoken sentence by sentence while Claude is still writing, so you hear the first
+  words in a second or two instead of waiting for the whole answer. See [Speed](#speed).
+- **Switch brains:** pick Claude Opus 5.5, Sonnet 5.5 or Haiku 5.5, how hard it should think (effort), and fast mode.
+- **Search, read and open your files** in the folders you allow (Documents, Desktop and Downloads by default),
+  including PDFs and Word documents. Search uses Spotlight, so it is instant.
 - **Search the web** and read web pages.
 - **Open apps and web pages** on your Mac.
 - **Remember things** about you between conversations (stored in `data/memory.json`).
@@ -22,9 +25,10 @@ It uses Claude through the Anthropic API.
   Click a note to preview it or ask Jarvis about it.
 - **See your screen:** "Jarvis, what's this error on my screen?" It takes a screenshot and reads it.
 - **Control your Mac:** check your open browser tab, play/pause/skip music, set the volume, add Reminders and Notes,
-  show notifications, and run your Apple Shortcuts.
-- **Click, type and tidy files, with your approval:** "Jarvis, click Save", "type my address into that box",
-  "tidy my sandbox folder". Every action is shown first (the exact point on a screenshot, the exact text, or every
+  show notifications, set timers ("Jarvis, ten minute timer for the pasta"), read or set the clipboard, and run
+  your Apple Shortcuts.
+- **Click, type, press keys, scroll and tidy files, with your approval:** "Jarvis, click Save", "search YouTube for
+  lo-fi" (types and presses Enter), "open a new tab" (cmd+T), "scroll down", "tidy my sandbox folder". Every action is shown first (the exact point on a screenshot, the exact text, or every
   file move) and only runs when you press Approve. See [Computer use](#computer-use).
 - **Show its work:** the Activity panel shows every tool call, its result, and a summary of Claude's thinking.
 
@@ -112,7 +116,25 @@ screen) and **Accessibility** (to click and type), both under System Settings > 
 Jarvis after allowing them. Without Accessibility macOS silently ignores the clicks, and the after-action screenshot
 shows that nothing changed.
 
-It cannot yet press keys such as Enter, Tab or shortcuts, drag, scroll, or use a second display.
+Besides clicks and typing it can press Enter after typing, press a single key or shortcut (Enter, Tab, Escape,
+arrows, Page Up/Down, F-keys, or shortcuts like cmd+T), and scroll, each as its own approved step. It never types
+or presses keys while Terminal, iTerm, Warp, VS Code or another terminal or script app is in front, so desktop
+control can't be used to run commands. Shortcuts that empty the Trash, log out or force-quit are refused outright.
+It cannot yet drag or use a second display.
+
+## Speed
+
+- Replies stream in and are spoken a sentence at a time, while the next sentence is already being voiced.
+- Your saved notes and the current time go along with every request, so Jarvis doesn't spend a round trip
+  looking them up.
+- Effort defaults to `low`, which is quick for everyday requests. Raise it in the classic dashboard (or with
+  `JARVIS_EFFORT` in `.env`) for harder jobs. If your `.env` still says `JARVIS_EFFORT=medium`, that wins.
+- **Fast mode** (Opus 5.5 only) makes Claude write up to about 2.5x faster, at twice the price per token. Turn it on
+  with the Fast mode box in the classic dashboard or `JARVIS_FAST=1` in `.env`. If the fast-mode rate limit is hit,
+  that reply carries on at normal speed.
+- Every request is logged to `data/requests.jsonl` with how long it took, the time to the first words, the tools it
+  used and any error, so slow or failing requests are easy to find. The HUD shows the last reply's time in its
+  status panel.
 
 ## Settings (`.env`)
 
@@ -120,7 +142,8 @@ It cannot yet press keys such as Enter, Tab or shortcuts, drag, scroll, or use a
 | --- | --- |
 | `ANTHROPIC_API_KEY` | Your API key |
 | `JARVIS_USER_NAME` | What Jarvis calls you |
-| `JARVIS_MODEL` / `JARVIS_EFFORT` | Default brain and effort |
+| `JARVIS_MODEL` / `JARVIS_EFFORT` | Default brain and effort (default `low`) |
+| `JARVIS_FAST` | `1` turns on Opus fast mode by default (about 2.5x faster output, twice the price) |
 | `JARVIS_SEARCH_DIRS` | Comma-separated folders Jarvis may search and read |
 | `JARVIS_OBSIDIAN_VAULT` | Your Obsidian vault folder. Empty means the vault Obsidian has open |
 | `JARVIS_NOTES_DIR` | Folder of Markdown notes for the knowledge graph. Empty means your Obsidian vault |
@@ -158,7 +181,9 @@ Jarvis only listens on `127.0.0.1`, so nothing outside your Mac can reach it.
 - **Phase 2 (done):** Gmail and Google Calendar, a morning briefing, and a 3D graph of your notes.
 - **Phase 3 (done):** seeing the screen and Mac control.
 - **Computer use (done):** approved clicks, typing and sandbox file moves, each verified afterwards.
-- **Later:** phone calls (for example booking reservations), key presses and dragging, and Telegram.
+- **Speed and everyday tools (done):** streamed speech, fast mode, key presses, scrolling, timers, clipboard,
+  opening files and reading Word documents.
+- **Later:** phone calls (for example booking reservations), dragging, and Telegram.
 
 ## Tests
 

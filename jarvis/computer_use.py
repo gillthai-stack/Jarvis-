@@ -29,6 +29,7 @@ from typing import Awaitable, Callable
 import httpx
 
 from . import config
+from .desktop_api import MAX_SCROLL_LINES, parse_keys
 from .sandbox import Sandbox, SandboxError
 
 Emit = Callable[[dict], Awaitable[None]]
@@ -91,8 +92,14 @@ class DesktopClient:
     def click(self, x: float, y: float, button: str, clicks: int) -> dict:
         return self._request("POST", "/click", {"x": x, "y": y, "button": button, "clicks": clicks})
 
-    def type_text(self, text: str) -> dict:
-        return self._request("POST", "/type", {"text": text})
+    def type_text(self, text: str, press_enter: bool = False) -> dict:
+        return self._request("POST", "/type", {"text": text, "press_enter": press_enter})
+
+    def press_key(self, keys: str) -> dict:
+        return self._request("POST", "/key", {"keys": keys})
+
+    def scroll(self, x: float, y: float, lines: int) -> dict:
+        return self._request("POST", "/scroll", {"x": x, "y": y, "lines": lines})
 
 
 # ---------- audit log ----------
@@ -175,13 +182,50 @@ TOOLS: dict[str, dict] = {
         "input_schema": _schema({"proposal_id": PROPOSAL_ID}, ["proposal_id"]),
     },
     "propose_keyboard_text": {
-        "description": "Propose typing plain text (no Enter or Tab) into whatever has keyboard focus in the latest "
-                       "screenshot. Nothing is typed until the user approves; call execute_approved_keyboard_text next.",
+        "description": "Propose typing plain text (no Tab or line breaks) into whatever has keyboard focus in the "
+                       "latest screenshot, optionally pressing Enter afterwards (to search, send or submit). Nothing "
+                       "is typed until the user approves; call execute_approved_keyboard_text next. Never used in "
+                       "terminal apps.",
         "input_schema": _schema({
             "screenshot_id": SCREENSHOT_ID,
             "text": {"type": "string", "minLength": 1, "maxLength": 500},
             "target": TARGET,
+            "press_enter": {"type": "boolean", "description": "Press Enter after typing"},
         }, ["screenshot_id", "text", "target"]),
+    },
+    "propose_key_press": {
+        "description": "Propose pressing one key or shortcut in the app shown in the latest screenshot: enter, tab, "
+                       "escape, space, delete, arrow keys (up/down/left/right), page_up/page_down, home/end, f1-f12, "
+                       "or a shortcut like cmd+t, cmd+l, cmd+shift+n, cmd+c. Nothing is pressed until the user "
+                       "approves; call execute_approved_key_press next. Never used in terminal apps.",
+        "input_schema": _schema({
+            "screenshot_id": SCREENSHOT_ID,
+            "keys": {"type": "string", "minLength": 1, "maxLength": 40, "description": "e.g. enter, down, cmd+t"},
+            "purpose": {"type": "string", "minLength": 1, "maxLength": 200,
+                        "description": "What pressing it does, in a few words, shown to the user"},
+        }, ["screenshot_id", "keys", "purpose"]),
+    },
+    "execute_approved_key_press": {
+        "description": "Wait for the user's decision on a key-press proposal and, if approved, press it. Returns a "
+                       "fresh screenshot to verify the result with.",
+        "input_schema": _schema({"proposal_id": PROPOSAL_ID}, ["proposal_id"]),
+    },
+    "propose_scroll": {
+        "description": "Propose scrolling at a point in the latest screenshot. Positive lines scroll down the page, "
+                       "negative up (about 10 lines is a screenful). Nothing moves until the user approves; call "
+                       "execute_approved_scroll next.",
+        "input_schema": _schema({
+            "screenshot_id": SCREENSHOT_ID,
+            "x": {"type": "number", "minimum": 0, "description": "Pixels from the left of the screenshot"},
+            "y": {"type": "number", "minimum": 0, "description": "Pixels from the top of the screenshot"},
+            "lines": {"type": "integer", "description": f"-{MAX_SCROLL_LINES} to {MAX_SCROLL_LINES}"},
+            "target": TARGET,
+        }, ["screenshot_id", "x", "y", "lines", "target"]),
+    },
+    "execute_approved_scroll": {
+        "description": "Wait for the user's decision on a scroll proposal and, if approved, scroll. Returns a fresh "
+                       "screenshot to verify the result with.",
+        "input_schema": _schema({"proposal_id": PROPOSAL_ID}, ["proposal_id"]),
     },
     "execute_approved_keyboard_text": {
         "description": "Wait for the user's decision on a typing proposal and, if approved, type it. Returns a fresh "
@@ -262,7 +306,7 @@ class Screenshot:
 @dataclass
 class Action:
     id: str
-    kind: str  # file_plan | click | type
+    kind: str  # file_plan | click | type | key | scroll
     summary: str
     details: dict  # validated arguments, executed as-is
     display: dict  # what the dashboard shows (typed text in full, file list, click point)
@@ -480,14 +524,50 @@ class ComputerUse:
         shot = self._fresh_screenshot(args["screenshot_id"])
         text = args["text"]
         if any(ord(c) < 32 or ord(c) == 127 for c in text):
-            raise ToolError("Text may not contain Enter, Tab or other control characters.")
+            raise ToolError("Text may not contain line breaks, Tab or other control characters. Use press_enter "
+                            "or propose_key_press instead.")
+        enter = bool(args.get("press_enter"))
         a = await self._propose(
-            "type", f"Type {len(text)} characters into {args['target']}",
-            details={"text": text},
-            display={"target": args["target"], "text": text, "screenshot_id": shot.id},
+            "type", f"Type {len(text)} characters into {args['target']}" + (" and press Enter" if enter else ""),
+            details={"text": text, "press_enter": enter},
+            display={"target": args["target"], "text": text, "press_enter": enter, "screenshot_id": shot.id},
             screenshot_id=shot.id,
         )
         return (f"Proposal {a.id} is on screen for the user. Call execute_approved_keyboard_text with "
+                f"proposal_id {a.id} now; it waits for their decision.")
+
+    async def _propose_key_press(self, args: dict) -> str:
+        shot = self._fresh_screenshot(args["screenshot_id"])
+        try:
+            key, modifiers = parse_keys(args["keys"])
+        except ValueError as e:
+            raise ToolError(str(e))
+        label = "+".join(modifiers + [key])
+        a = await self._propose(
+            "key", f"Press {label}: {args['purpose']}",
+            details={"keys": label},
+            display={"keys": label, "purpose": args["purpose"], "screenshot_id": shot.id},
+            screenshot_id=shot.id,
+        )
+        return (f"Proposal {a.id} is on screen for the user. Call execute_approved_key_press with "
+                f"proposal_id {a.id} now; it waits for their decision.")
+
+    async def _propose_scroll(self, args: dict) -> str:
+        shot = self._fresh_screenshot(args["screenshot_id"])
+        x, y, lines = float(args["x"]), float(args["y"]), args["lines"]
+        if x >= shot.width or y >= shot.height:
+            raise ToolError(f"({x:.0f}, {y:.0f}) is outside the {shot.width}x{shot.height} screenshot.")
+        if lines == 0 or abs(lines) > MAX_SCROLL_LINES:
+            raise ToolError(f"lines must be between -{MAX_SCROLL_LINES} and {MAX_SCROLL_LINES}, and not 0.")
+        px, py = x * shot.screen_width / shot.width, y * shot.screen_height / shot.height
+        a = await self._propose(
+            "scroll", f"Scroll {'down' if lines > 0 else 'up'} {abs(lines)} lines in {args['target']}",
+            details={"x": round(px, 1), "y": round(py, 1), "lines": lines},
+            display={"target": args["target"], "x": round(x), "y": round(y), "lines": lines,
+                     "image_width": shot.width, "image_height": shot.height, "screenshot_id": shot.id},
+            screenshot_id=shot.id,
+        )
+        return (f"Proposal {a.id} is on screen for the user. Call execute_approved_scroll with "
                 f"proposal_id {a.id} now; it waits for their decision.")
 
     async def _execute_approved_file_plan(self, args: dict) -> str:
@@ -515,7 +595,22 @@ class ComputerUse:
 
     async def _execute_approved_keyboard_text(self, args: dict) -> list:
         a = await self._await_approval(args["proposal_id"], "type")
-        return await self._desktop_action(a, lambda: self.desktop.type_text(a.details["text"]), a.summary)
+        d = a.details
+        if d.get("press_enter"):
+            act = lambda: self.desktop.type_text(d["text"], press_enter=True)  # noqa: E731
+        else:
+            act = lambda: self.desktop.type_text(d["text"])  # noqa: E731
+        return await self._desktop_action(a, act, a.summary)
+
+    async def _execute_approved_key_press(self, args: dict) -> list:
+        a = await self._await_approval(args["proposal_id"], "key")
+        return await self._desktop_action(a, lambda: self.desktop.press_key(a.details["keys"]), a.summary)
+
+    async def _execute_approved_scroll(self, args: dict) -> list:
+        a = await self._await_approval(args["proposal_id"], "scroll")
+        d = a.details
+        return await self._desktop_action(a, lambda: self.desktop.scroll(d["x"], d["y"], d["lines"]),
+                                          f"{a.summary} at ({d['x']}, {d['y']}) points")
 
     async def _report_verification(self, args: dict) -> str:
         a = self.actions.get(args["action_id"])

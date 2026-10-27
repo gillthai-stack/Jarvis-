@@ -98,6 +98,7 @@ async def get_config():
         "model": jarvis.model,
         "efforts": config.EFFORTS,
         "effort": jarvis.effort,
+        "fast": jarvis.fast,
         "user": config.USER_NAME,
         "tools": list(tools.TOOLS) + list(computer_use.TOOLS) + ["web_search", "web_fetch"],
         "search_dirs": [str(p) for p in config.SEARCH_DIRS],
@@ -170,10 +171,13 @@ async def ws(socket: WebSocket):
                     task.cancel()
             elif kind == "set_model" and msg.get("model") in config.MODELS:
                 jarvis.model = msg["model"]
-                await emit({"type": "settings", "model": jarvis.model, "effort": jarvis.effort})
+                await emit({"type": "settings", "model": jarvis.model, "effort": jarvis.effort, "fast": jarvis.fast})
             elif kind == "set_effort" and msg.get("effort") in config.EFFORTS:
                 jarvis.effort = msg["effort"]
-                await emit({"type": "settings", "model": jarvis.model, "effort": jarvis.effort})
+                await emit({"type": "settings", "model": jarvis.model, "effort": jarvis.effort, "fast": jarvis.fast})
+            elif kind == "set_fast" and isinstance(msg.get("fast"), bool):
+                jarvis.fast = msg["fast"]
+                await emit({"type": "settings", "model": jarvis.model, "effort": jarvis.effort, "fast": jarvis.fast})
             elif kind == "reset":
                 jarvis.reset()
                 await emit({"type": "reset"})

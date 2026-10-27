@@ -9,7 +9,8 @@
 //  from Claude through it instead (see jarvisResponder.ts).
 // ============================================================================
 
-export type Responder = (input: string) => Promise<string>
+/** Answers one request. onText, when given, receives the reply as it streams in. */
+export type Responder = (input: string, onText?: (delta: string) => void) => Promise<string>
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
 

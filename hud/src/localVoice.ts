@@ -187,6 +187,8 @@ export interface SpeechOutput {
   prime(): void
   /** Speaks text. Stops anything already playing first. Resolves when done or stopped. */
   speak(text: string, options: SpeakOptions): Promise<void>
+  /** Starts preparing text that will be spoken soon, so speak() can start at once. Optional. */
+  prefetch?(text: string, signal: AbortSignal): void
   stop(): void
   dispose(): void
 }
@@ -196,6 +198,8 @@ export function createLocalSpeech(frame: AudioFrame): SpeechOutput {
   let ctx: AudioContext | null = null
   let current: { source: AudioBufferSourceNode; done: () => void } | null = null
   let raf = 0
+  // Audio being made ahead of time by prefetch(), by text. Entries are used once.
+  const pending = new Map<string, Promise<ArrayBuffer>>()
 
   const context = () => {
     if (!ctx || ctx.state === 'closed') ctx = new AudioContext()
@@ -223,10 +227,19 @@ export function createLocalSpeech(frame: AudioFrame): SpeechOutput {
     prime() {
       void context().resume().catch(() => undefined)
     },
+    prefetch(text, signal) {
+      if (pending.has(text) || signal.aborted) return
+      const audio = synthesize(text, signal)
+      audio.catch(() => undefined) // reported when (and if) speak() uses it
+      pending.set(text, audio)
+      signal.addEventListener('abort', () => pending.delete(text), { once: true })
+    },
     async speak(text, { signal, onStart }) {
       stop()
       if (signal.aborted) return
-      const audio = await synthesize(text, signal)
+      const ready = pending.get(text)
+      pending.delete(text)
+      const audio = await (ready ?? synthesize(text, signal))
       if (signal.aborted) return // a newer reply or Stop came in while the voice was being made
       const ac = context()
       await ac.resume().catch(() => undefined)

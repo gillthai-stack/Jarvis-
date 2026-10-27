@@ -6,10 +6,13 @@ change what the script does.
 """
 
 import base64
+import itertools
 import json
 import platform
 import subprocess
 import tempfile
+import threading
+from datetime import datetime, timedelta
 from pathlib import Path
 
 SCREEN_MAX_PX = 1568  # Claude reads images up to about this size without downscaling
@@ -157,6 +160,93 @@ def notify(args: dict) -> str:
     return "Notification shown."
 
 
+# ---------- clipboard ----------
+
+MAX_CLIPBOARD_CHARS = 20_000
+
+
+def read_clipboard(_: dict) -> str:
+    _require_mac()
+    text = subprocess.run(["pbpaste"], capture_output=True, text=True, timeout=10).stdout
+    if not text.strip():
+        return "The clipboard has no text."
+    return text[:MAX_CLIPBOARD_CHARS] + (f"\n\n[cut off: {len(text)} characters]" if len(text) > MAX_CLIPBOARD_CHARS else "")
+
+
+def copy_to_clipboard(args: dict) -> str:
+    _require_mac()
+    text = args["text"]
+    if len(text) > MAX_CLIPBOARD_CHARS:
+        raise ValueError(f"That is longer than {MAX_CLIPBOARD_CHARS} characters.")
+    subprocess.run(["pbcopy"], input=text, text=True, timeout=10, check=True)
+    return f"Copied {len(text)} characters to the clipboard."
+
+
+# ---------- timers ----------
+
+MAX_TIMERS = 20
+MAX_TIMER_MINUTES = 24 * 60
+_timers: dict[str, dict] = {}
+_timer_ids = itertools.count(1)
+_timer_lock = threading.Lock()
+
+
+def _ring(timer_id: str) -> None:
+    with _timer_lock:
+        t = _timers.pop(timer_id, None)
+    if t is None:
+        return
+    label = t["label"] or "Timer"
+    try:
+        osascript('on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv) sound name "Glass"\n'
+                  'end run', "Jarvis timer", f"{label}: time's up.")
+        # The label goes in as a file, never on the command line.
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write(f"{label.replace('[[', ' ')}. Time's up.")
+        subprocess.run(["/usr/bin/say", "-f", f.name], timeout=30)
+        Path(f.name).unlink(missing_ok=True)
+    except Exception:
+        pass  # the notification is best effort; nothing is waiting on it
+
+
+def set_timer(args: dict) -> str:
+    _require_mac()
+    minutes = args["minutes"]
+    if not 0 < minutes <= MAX_TIMER_MINUTES:
+        raise ValueError("Timers can be from a few seconds up to 24 hours (minutes between 0.1 and 1440).")
+    label = args.get("label", "").strip()[:80]
+    with _timer_lock:
+        if len(_timers) >= MAX_TIMERS:
+            raise RuntimeError(f"There are already {MAX_TIMERS} timers running.")
+        timer_id = f"timer{next(_timer_ids)}"
+        due = datetime.now() + timedelta(minutes=minutes)
+        handle = threading.Timer(minutes * 60, _ring, args=(timer_id,))
+        handle.daemon = True
+        _timers[timer_id] = {"label": label, "due": due, "handle": handle}
+        handle.start()
+    return (f"Timer {timer_id} set for {minutes:g} minute{'s' if minutes != 1 else ''}"
+            f"{f' ({label})' if label else ''}, ringing at {due:%H:%M:%S}. Timers stop if Jarvis is restarted.")
+
+
+def list_timers(_: dict) -> str:
+    with _timer_lock:
+        if not _timers:
+            return "No timers are running."
+        now = datetime.now()
+        return json.dumps([{"id": i, "label": t["label"], "rings_at": f"{t['due']:%H:%M:%S}",
+                            "seconds_left": max(0, round((t["due"] - now).total_seconds()))}
+                           for i, t in _timers.items()], indent=1)
+
+
+def cancel_timer(args: dict) -> str:
+    with _timer_lock:
+        t = _timers.pop(args["id"], None)
+    if t is None:
+        raise ValueError(f"No running timer {args['id']}. Use list_timers to see them.")
+    t["handle"].cancel()
+    return f"Cancelled {args['id']}."
+
+
 # ---------- Shortcuts ----------
 
 def list_shortcuts(_: dict) -> str:
@@ -209,6 +299,19 @@ def tools(tool) -> dict:
             notify, "Show a macOS notification banner.",
             {"title": {"type": "string"}, "message": {"type": "string"}}, optional=("title",),
         ),
+        "read_clipboard": tool(read_clipboard, "Read the text currently on the Mac's clipboard."),
+        "copy_to_clipboard": tool(
+            copy_to_clipboard, "Put text on the Mac's clipboard so the user can paste it.", {"text": {"type": "string"}},
+        ),
+        "set_timer": tool(
+            set_timer,
+            "Start a countdown timer. When it ends the Mac shows a notification and says the label out loud.",
+            {"minutes": {"type": "number", "description": "Length in minutes, e.g. 0.5 for 30 seconds"},
+             "label": {"type": "string", "description": "What the timer is for, e.g. 'pasta'"}},
+            optional=("label",),
+        ),
+        "list_timers": tool(list_timers, "List running timers and how long each has left."),
+        "cancel_timer": tool(cancel_timer, "Cancel a running timer by its id.", {"id": {"type": "string"}}),
         "list_shortcuts": tool(list_shortcuts, "List the user's Apple Shortcuts by name."),
         "run_shortcut": tool(
             run_shortcut,

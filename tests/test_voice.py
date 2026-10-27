@@ -260,7 +260,7 @@ def test_transcript_goes_through_the_normal_chat(env):
         while not seen or seen[-1]["type"] != "done":
             seen.append(ws.receive_json())
     assert {"type": "text", "text": "It is noon."} in seen
-    assert server.jarvis.messages[0]["content"] == "Hello Jarvis."
+    assert server.jarvis.messages[0]["content"][-1]["text"] == "Hello Jarvis."
 
 
 # ---------- the real whisper.cpp (optional) ----------

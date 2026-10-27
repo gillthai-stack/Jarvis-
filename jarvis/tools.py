@@ -15,6 +15,15 @@ from . import config
 
 MAX_RESULTS = 25
 MAX_READ_CHARS = 20_000
+# Converted with macOS's built-in textutil.
+TEXTUTIL_SUFFIXES = {".docx", ".doc", ".rtf", ".rtfd", ".odt", ".wordml", ".webarchive"}
+# Documents open_file may hand to their app. Anything that can run code (.app, .command, scripts,
+# installers, workflows) is left out on purpose.
+OPENABLE_SUFFIXES = {
+    ".pdf", ".txt", ".md", ".markdown", ".csv", ".rtf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".pages", ".numbers", ".key", ".odt", ".ods", ".odp", ".png", ".jpg", ".jpeg", ".gif", ".heic", ".webp",
+    ".tif", ".tiff", ".svg", ".mp3", ".m4a", ".wav", ".aiff", ".mp4", ".mov", ".m4v", ".epub", ".json",
+}
 TEXT_SUFFIXES = {
     ".txt", ".md", ".markdown", ".csv", ".json", ".yaml", ".yml", ".py", ".js", ".ts",
     ".html", ".css", ".log", ".rtf", ".xml", ".ini", ".toml", ".sh",
@@ -43,13 +52,46 @@ def get_time(_: dict) -> str:
     return now.strftime("%A %d %B %Y, %H:%M %Z")
 
 
+def _spotlight(query: str, in_content: bool) -> list[Path] | None:
+    """Ask Spotlight (mdfind), which answers from its index in well under a second. None if it can't be used."""
+    if platform.system() != "Darwin" or query.startswith("-"):
+        return None
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for root in config.SEARCH_DIRS:
+        if not root.exists():
+            continue
+        # The query is one argument, never part of a shell command. -name matches file names only.
+        argv = ["mdfind", "-onlyin", str(root)] + ([query] if in_content else ["-name", query])
+        try:
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode != 0:
+            return None
+        for line in result.stdout.splitlines():
+            p = Path(line)
+            rel = p.relative_to(root).parts if p.is_relative_to(root) else ()
+            if p in seen or not rel or any(part.startswith(".") or part.endswith(".app") for part in rel):
+                continue
+            if p.is_file():
+                seen.add(p)
+                found.append(p)
+    return found
+
+
 def search_files(args: dict) -> str:
     query = args["query"].lower()
     in_content = args.get("search_contents", False)
     hits = []
-    for p in _iter_files(config.SEARCH_DIRS):
-        match = query in p.name.lower()
-        if not match and in_content and p.suffix.lower() in TEXT_SUFFIXES and p.stat().st_size < 2_000_000:
+    indexed = _spotlight(args["query"], in_content)
+    candidates = indexed if indexed else _iter_files(config.SEARCH_DIRS)
+    for p in candidates:
+        if indexed:
+            match = True
+        else:
+            match = query in p.name.lower()
+        if not match and not indexed and in_content and p.suffix.lower() in TEXT_SUFFIXES and p.stat().st_size < 2_000_000:
             try:
                 match = query in p.read_text(errors="ignore").lower()
             except OSError:
@@ -76,7 +118,10 @@ def read_file(args: dict) -> str:
         raise FileNotFoundError(f"{path} does not exist.")
     if path.suffix.lower() == ".pdf":
         return _read_pdf(path)
-    text = path.read_text(errors="ignore")
+    if path.suffix.lower() in TEXTUTIL_SUFFIXES and platform.system() == "Darwin":
+        text = _textutil(path)
+    else:
+        text = path.read_text(errors="ignore")
     if len(text) > MAX_READ_CHARS:
         text = text[:MAX_READ_CHARS] + f"\n\n[cut off: file has {len(text)} characters]"
     return text
@@ -90,6 +135,33 @@ def _read_pdf(path: Path) -> str:
         return "PDF reading needs the pypdf package: pip install pypdf"
     text = "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
     return text[:MAX_READ_CHARS]
+
+
+def _textutil(path: Path) -> str:
+    result = subprocess.run(["textutil", "-convert", "txt", "-stdout", str(path)],
+                            capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"Could not read {path.name}.")
+    return result.stdout
+
+
+def open_file(args: dict) -> str:
+    if platform.system() != "Darwin":
+        raise RuntimeError("Opening files only works on macOS.")
+    path = Path(args["path"]).expanduser().resolve()
+    if not _allowed(path):
+        raise PermissionError(f"{path} is outside the folders Jarvis may open.")
+    if not path.exists():
+        raise FileNotFoundError(f"{path} does not exist.")
+    if path.is_dir() or args.get("reveal"):
+        # Show it in Finder rather than opening it.
+        subprocess.run(["open", "-R", str(path)], check=True, timeout=15)
+        return f"Showed {path.name} in Finder."
+    if path.suffix.lower() not in OPENABLE_SUFFIXES:
+        raise PermissionError(f"Jarvis only opens documents, pictures and media, not {path.suffix or 'this'} files. "
+                              "It can show the file in Finder instead (reveal).")
+    subprocess.run(["open", str(path)], check=True, timeout=15)
+    return f"Opened {path.name}."
 
 
 def open_url(args: dict) -> str:
@@ -110,10 +182,15 @@ def open_app(args: dict) -> str:
     return f"Opened {name}."
 
 
-def _load_memory() -> list:
-    if MEMORY_FILE.exists():
-        return json.loads(MEMORY_FILE.read_text())
-    return []
+def load_memory() -> list:
+    try:
+        notes = json.loads(MEMORY_FILE.read_text()) if MEMORY_FILE.exists() else []
+    except ValueError:
+        return []
+    return notes if isinstance(notes, list) else []
+
+
+_load_memory = load_memory
 
 
 def remember(args: dict) -> str:
@@ -148,8 +225,17 @@ TOOLS = {
     ),
     "read_file": tool(
         read_file,
-        "Read a text, Markdown, code or PDF file from the allowed folders. Use a path returned by search_files.",
+        "Read a text, Markdown, code, PDF, Word (.docx/.doc) or RTF file from the allowed folders. "
+        "Use a path returned by search_files.",
         {"path": {"type": "string", "description": "Absolute path to the file"}},
+    ),
+    "open_file": tool(
+        open_file,
+        "Open a document, picture or media file from the allowed folders in its usual app, or show it (or a folder) "
+        "in Finder with reveal.",
+        {"path": {"type": "string", "description": "Absolute path, e.g. from search_files"},
+         "reveal": {"type": "boolean", "description": "Show it in Finder instead of opening it"}},
+        optional=("reveal",),
     ),
     "open_url": tool(open_url, "Open a web page in the user's default browser.", {"url": {"type": "string"}}),
     "open_app": tool(
@@ -162,7 +248,7 @@ TOOLS = {
         "Save a fact about the user or a task to long-term memory so it is available in later conversations.",
         {"note": {"type": "string"}},
     ),
-    "recall": tool(recall, "List everything saved to long-term memory."),
+    "recall": tool(recall, "List everything saved to long-term memory (also listed in your instructions)."),
 }
 
 from . import google_tools, mac_tools, obsidian  # noqa: E402  (register their tools)
@@ -171,7 +257,7 @@ TOOLS.update(google_tools.tools(tool))
 TOOLS.update(mac_tools.tools(tool))
 TOOLS.update(obsidian.tools(tool))
 
-PY_TYPES = {"string": str, "boolean": bool, "integer": int, "array": list}
+PY_TYPES = {"string": str, "boolean": bool, "integer": int, "number": (int, float), "array": list}
 
 
 def tool_definitions() -> list[dict]:
@@ -201,7 +287,7 @@ def validate(name: str, args) -> str | None:
         if spec is None:
             return f"Unexpected field '{key}'."
         expected = PY_TYPES[spec["type"]]
-        if not isinstance(value, expected) or (expected is int and isinstance(value, bool)):
+        if not isinstance(value, expected) or (spec["type"] in ("integer", "number") and isinstance(value, bool)):
             return f"Field '{key}' should be a {spec['type']}."
         if "enum" in spec and value not in spec["enum"]:
             return f"Field '{key}' must be one of {', '.join(spec['enum'])}."

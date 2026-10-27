@@ -16,8 +16,11 @@ MODELS = {
     "claude-haiku-5-5": "Claude Haiku 5.5 (cheapest)",
 }
 DEFAULT_MODEL = os.getenv("JARVIS_MODEL", "claude-opus-5-5")
-DEFAULT_EFFORT = os.getenv("JARVIS_EFFORT", "medium")
+# "low" keeps spoken replies quick; raise it in the dashboard for harder jobs.
+DEFAULT_EFFORT = os.getenv("JARVIS_EFFORT", "low")
 EFFORTS = ["low", "medium", "high", "xhigh", "max"]
+# Fast mode: Opus 5.5 writes up to about 2.5x faster, at twice the price per token. Off unless turned on.
+FAST_MODE = os.getenv("JARVIS_FAST", "").strip().lower() in ("1", "true", "yes", "on")
 
 # Folders Jarvis may search and read. Comma separated, ~ is expanded.
 SEARCH_DIRS = [

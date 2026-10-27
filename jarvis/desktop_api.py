@@ -31,7 +31,58 @@ from . import config
 SCREEN_MAX_PX = 1568  # Claude reads images up to about this size without downscaling
 ACTION_TIMEOUT = 15  # seconds for any one screenshot, click or typing request
 MAX_TYPE_CHARS = 500
+MAX_SCROLL_LINES = 50
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+# macOS virtual key codes (ANSI layout) for the keys Jarvis may press.
+KEY_CODES = {
+    **dict(zip("asdfhgzxcv", (0, 1, 2, 3, 4, 5, 6, 7, 8, 9))), "b": 11, "q": 12, "w": 13, "e": 14, "r": 15,
+    "y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "=": 24, "9": 25, "7": 26, "-": 27,
+    "8": 28, "0": 29, "]": 30, "o": 31, "u": 32, "[": 33, "i": 34, "p": 35, "l": 37, "j": 38, "'": 39, "k": 40,
+    ";": 41, "\\": 42, ",": 43, "/": 44, "n": 45, "m": 46, ".": 47, "`": 50,
+    "return": 36, "enter": 36, "tab": 48, "space": 49, "delete": 51, "backspace": 51, "escape": 53, "esc": 53,
+    "forward_delete": 117, "home": 115, "end": 119, "page_up": 116, "page_down": 121,
+    "left": 123, "right": 124, "down": 125, "up": 126,
+    "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97, "f7": 98, "f8": 100, "f9": 101, "f10": 109,
+    "f11": 103, "f12": 111,
+}
+MODIFIERS = {"cmd": "cmd", "command": "cmd", "shift": "shift", "option": "option", "alt": "option",
+             "opt": "option", "ctrl": "ctrl", "control": "ctrl"}
+# Shortcuts that empty the Trash, log out or force-quit are never pressed, approved or not.
+BLOCKED_SHORTCUTS = {
+    frozenset({"cmd", "shift", "delete"}), frozenset({"cmd", "shift", "option", "delete"}),
+    frozenset({"cmd", "shift", "q"}), frozenset({"cmd", "shift", "option", "q"}),
+    frozenset({"cmd", "option", "escape"}), frozenset({"cmd", "option", "shift", "escape"}),
+}
+# Apps where pressing Enter could run a command. Jarvis never types or presses keys while one is in front,
+# so desktop control can't be turned into a shell.
+COMMAND_APPS = {
+    "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "dev.warp.Warp", "net.kovidgoyal.kitty",
+    "io.alacritty", "org.alacritty", "com.github.wez.wezterm", "co.zeit.hyper", "com.mitchellh.ghostty",
+    "com.apple.ScriptEditor2", "com.apple.Automator", "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92",
+}
+
+
+def parse_keys(spec: str) -> tuple[str, list[str]]:
+    """'cmd+shift+t' -> ('t', ['cmd', 'shift']). Raises ValueError for anything not on the lists above."""
+    parts = [p.strip().lower() for p in spec.replace(" ", "").split("+")]
+    if not parts or not all(parts) or len(parts) > 4:
+        raise ValueError(f"'{spec}' isn't a key. Use a key name like enter, tab, escape, down, or a shortcut like cmd+t.")
+    *mods, key = parts
+    if key in MODIFIERS:
+        raise ValueError("A shortcut needs a key after the modifiers, like cmd+t.")
+    if key not in KEY_CODES:
+        raise ValueError(f"'{key}' isn't a key Jarvis can press.")
+    normalized = []
+    for m in mods:
+        if m not in MODIFIERS:
+            raise ValueError(f"'{m}' isn't a modifier. Use cmd, shift, option or ctrl.")
+        if MODIFIERS[m] not in normalized:
+            normalized.append(MODIFIERS[m])
+    name = {"enter": "return", "backspace": "delete", "esc": "escape"}.get(key, key)
+    if frozenset(normalized + [name]) in BLOCKED_SHORTCUTS:
+        raise ValueError(f"Jarvis never presses {spec}.")
+    return name, normalized
 LOG_FILE = config.DATA_DIR / "desktop_api.log"
 
 
@@ -51,6 +102,9 @@ class Backend(Protocol):
     def screenshot(self) -> Shot: ...
     def click(self, x: float, y: float, button: str, clicks: int) -> None: ...
     def type_text(self, text: str) -> None: ...
+    def press_key(self, key: str, modifiers: list[str]) -> None: ...
+    def scroll(self, x: float, y: float, lines: int) -> None: ...
+    def frontmost_app(self) -> str | None: ...
 
 
 def encode_shot(png_or_image, screen_w: float, screen_h: float) -> Shot:
@@ -135,6 +189,38 @@ class MacBackend:
                 Q.CGEventPost(Q.kCGHIDEventTap, ev)
             time.sleep(0.02)
 
+    def press_key(self, key: str, modifiers: list[str]) -> None:
+        Q = self._need_quartz()
+        masks = {"cmd": Q.kCGEventFlagMaskCommand, "shift": Q.kCGEventFlagMaskShift,
+                 "option": Q.kCGEventFlagMaskAlternate, "ctrl": Q.kCGEventFlagMaskControl}
+        flags = 0
+        for m in modifiers:
+            flags |= masks[m]
+        for key_down in (True, False):
+            ev = Q.CGEventCreateKeyboardEvent(None, KEY_CODES[key], key_down)
+            Q.CGEventSetFlags(ev, flags)
+            Q.CGEventPost(Q.kCGHIDEventTap, ev)
+            time.sleep(0.03)
+
+    def scroll(self, x: float, y: float, lines: int) -> None:
+        Q = self._need_quartz()
+        pt = Q.CGPointMake(x, y)
+        Q.CGEventPost(Q.kCGHIDEventTap, Q.CGEventCreateMouseEvent(None, Q.kCGEventMouseMoved, pt, Q.kCGMouseButtonLeft))
+        time.sleep(0.05)
+        # Positive lines scroll the content down (towards the end of a page), in steps that apps animate smoothly.
+        step = -1 if lines > 0 else 1
+        for _ in range(abs(lines)):
+            Q.CGEventPost(Q.kCGHIDEventTap, Q.CGEventCreateScrollWheelEvent(None, Q.kCGScrollEventUnitLine, 1, step))
+            time.sleep(0.01)
+
+    def frontmost_app(self) -> str | None:
+        try:
+            from AppKit import NSWorkspace  # pyobjc-framework-Cocoa, installed with Quartz
+            app = NSWorkspace.sharedWorkspace().frontmostApplication()
+            return str(app.bundleIdentifier()) if app is not None else None
+        except Exception:
+            return None
+
 
 class UnsupportedBackend:
     name = "unsupported"
@@ -142,7 +228,10 @@ class UnsupportedBackend:
     def _fail(self, *_):
         raise RuntimeError("Desktop control only works on macOS.")
 
-    screenshot = click = type_text = _fail
+    screenshot = click = type_text = press_key = scroll = _fail
+
+    def frontmost_app(self):
+        return None
 
 
 def default_backend() -> Backend:
@@ -162,6 +251,7 @@ class ClickRequest(BaseModel):
 class TypeRequest(BaseModel):
     model_config = {"extra": "forbid"}
     text: str = Field(min_length=1, max_length=MAX_TYPE_CHARS)
+    press_enter: bool = False
 
     @field_validator("text")
     @classmethod
@@ -169,6 +259,24 @@ class TypeRequest(BaseModel):
         if any(ord(c) < 32 or ord(c) == 127 for c in v):
             raise ValueError("text may not contain control characters such as Enter or Tab")
         return v
+
+
+class KeyRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    keys: str = Field(min_length=1, max_length=40)
+
+    @field_validator("keys")
+    @classmethod
+    def known(cls, v: str) -> str:
+        parse_keys(v)
+        return v
+
+
+class ScrollRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    x: float = Field(ge=0, le=20000)  # points
+    y: float = Field(ge=0, le=20000)
+    lines: int = Field(ge=-MAX_SCROLL_LINES, le=MAX_SCROLL_LINES)
 
 
 # ---------- app ----------
@@ -234,12 +342,37 @@ def create_app(backend: Backend | None = None, token: str | None = None,
         await run(backend.click, req.x, req.y, req.button, req.clicks)
         return {"ok": True}
 
+    def check_front(submits: bool) -> None:
+        front = getattr(backend, "frontmost_app", lambda: None)()
+        if front in COMMAND_APPS:
+            log("rejected", reason="command app in front", app=front)
+            raise HTTPException(403, "A terminal or script app is in front. Jarvis never types or presses keys there.")
+        if front is None and submits and backend.name == "macos":
+            raise HTTPException(403, "Couldn't tell which app is in front, so Jarvis won't press keys right now.")
+
     @app.post("/type", dependencies=[Depends(authorize)])
     async def type_text(req: TypeRequest):
+        check_front(submits=req.press_enter)
         # The text itself is not logged: it may be private.
-        log("type", chars=len(req.text))
+        log("type", chars=len(req.text), press_enter=req.press_enter)
         await run(backend.type_text, req.text)
+        if req.press_enter:
+            await run(backend.press_key, "return", [])
         return {"ok": True, "chars": len(req.text)}
+
+    @app.post("/key", dependencies=[Depends(authorize)])
+    async def press_key(req: KeyRequest):
+        key, modifiers = parse_keys(req.keys)
+        check_front(submits=True)
+        log("key", key=key, modifiers=modifiers)
+        await run(backend.press_key, key, modifiers)
+        return {"ok": True}
+
+    @app.post("/scroll", dependencies=[Depends(authorize)])
+    async def scroll(req: ScrollRequest):
+        log("scroll", x=req.x, y=req.y, lines=req.lines)
+        await run(backend.scroll, req.x, req.y, req.lines)
+        return {"ok": True}
 
     return app
 

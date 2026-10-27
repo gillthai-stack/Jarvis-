@@ -80,10 +80,29 @@ function ActionDetails({ action, shots }: { action: AgentAction; shots: Screensh
       </>
     )
   }
+  if (action.kind === 'key') {
+    return (
+      <p className="ops-note">
+        {action.status === 'pending' ? 'Will press' : 'Pressed'} <kbd>{d.keys}</kbd>: {d.purpose}
+      </p>
+    )
+  }
+  if (action.kind === 'scroll') {
+    const shot = shots.find((s) => s.id === d.screenshot_id)
+    return (
+      <>
+        <p className="ops-note">
+          Scroll {(d.lines ?? 0) > 0 ? 'down' : 'up'} {Math.abs(d.lines ?? 0)} lines in {d.target} at ({d.x}, {d.y})
+        </p>
+        <ClickPreview action={action} shot={shot} />
+      </>
+    )
+  }
   return (
     <>
       <p className="ops-note">
-        {action.status === 'pending' ? 'Will type into' : 'Typed into'} {d.target} (whatever has keyboard focus):
+        {action.status === 'pending' ? 'Will type into' : 'Typed into'} {d.target} (whatever has keyboard focus)
+        {d.press_enter ? ', then press Enter' : ''}:
       </p>
       <pre className="ops-text">{d.text}</pre>
     </>
