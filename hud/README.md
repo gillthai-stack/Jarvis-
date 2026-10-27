@@ -3,23 +3,28 @@
 A React + TypeScript + Vite desktop interface for Jarvis: a 3D holographic core built with
 React Three Fiber and Drei, a cinematic dashboard, voice input and spoken replies.
 
-> **Demo mode.** Replies come from a local demo handler (`src/demoResponder.ts`).
-> The Claude API is **not** connected to this interface yet, and the UI says so.
+> **Claude or demo.** When the Jarvis server (`./start.sh`) is running, the interface sends your
+> requests to it, and it answers with Claude using the API key in `.env` and all of Jarvis's tools.
+> When the server isn't running, a clearly labelled demo handler answers instead. The top bar always
+> shows which one you're talking to.
 
 ## Run it
 
 You need Node.js 20.19 or newer (`node -v`; install the LTS from https://nodejs.org if needed).
 
+**Everyday use (one command):** build the interface once, then start Jarvis as usual and open the
+holographic interface at http://127.0.0.1:8765/hud/
+
 ```bash
-cd hud
-npm install      # first time only
-npm run dev      # opens http://localhost:5173
+cd ~/jarvis/hud && npm install && npm run build   # once, and again after updates
+cd ~/jarvis && ./start.sh
 ```
 
-`npm run build` type-checks and builds to `dist/`; `npm run preview` serves that build.
+**While changing the interface:** keep `./start.sh` running in one Terminal window and run
+`npm run dev` in `hud/` in another. Vite opens http://localhost:5173 and forwards requests to the
+Jarvis server, so live reload and Claude both work.
 
-Use Chrome, Edge or Safari for voice input. Firefox has no speech recognition, so the mic button
-is disabled there and you can type instead. Chrome's recognition needs an internet connection.
+Add `?demo` to the address to force demo replies.
 
 ## Using it
 
@@ -58,11 +63,13 @@ down, the parallax and expanding shockwave are switched off, and the CSS animati
 | `src/voice.ts` | Voice utilities: SpeechRecognition and speechSynthesis wrappers |
 | `src/demoResponder.ts` | The clearly labelled demo response handler |
 | `src/styles.css` | All styles, including the responsive layout |
-| `src/main.tsx` | Entry point; picks the responder |
+| `src/main.tsx` | Entry point; uses Claude via the Jarvis server when it is running, otherwise demo |
+| `src/jarvisResponder.ts` | Sends requests to the Jarvis server over its WebSocket |
 
-## Connecting Claude later
+## How the Claude connection works
 
-`App` takes a `respond: (input: string) => Promise<string>` function and an `engine` label.
-To connect Claude, write a responder that calls a server holding your API key (for example the
-existing Jarvis Python server in this repo), pass it in `src/main.tsx`, and set `engine="claude"`.
-Never put the API key in this browser code.
+`src/main.tsx` checks for the Jarvis server at `/api/config` on load. If it answers, replies come from
+`src/jarvisResponder.ts`, which uses the server's existing `/ws` WebSocket (the same one the classic
+dashboard uses). The API key stays in `~/jarvis/.env` on the server and never reaches the browser.
+Model and effort follow the server's settings (`JARVIS_MODEL` / `JARVIS_EFFORT` in `.env`, or the
+classic dashboard's pickers).

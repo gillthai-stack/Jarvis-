@@ -24,10 +24,11 @@ It uses Claude through the Anthropic API.
   show notifications, and run your Apple Shortcuts.
 - **Show its work:** the Activity panel shows every tool call, its result, and a summary of Claude's thinking.
 
-## Holographic interface (preview)
+## Holographic interface
 
-`hud/` holds a separate React + Three.js holographic interface with voice in and out. It runs on its own
-with demo replies and is not connected to Claude yet. See [hud/README.md](hud/README.md).
+`hud/` holds a 3D holographic interface with voice in and out. Build it once
+(`cd hud && npm install && npm run build`, needs Node.js 20.19+), then open http://127.0.0.1:8765/hud/
+while Jarvis is running and it talks to Claude through this server. See [hud/README.md](hud/README.md).
 
 ## Setup on your Mac
 

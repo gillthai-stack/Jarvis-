@@ -5,13 +5,14 @@ import json
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config, google_tools, notes, obsidian, tools
 from .agent import Jarvis
 
 WEB_DIR = config.ROOT / "web"
+HUD_DIR = config.ROOT / "hud" / "dist"
 
 app = FastAPI(title="Jarvis")
 jarvis = Jarvis()
@@ -122,11 +123,28 @@ async def ws(socket: WebSocket):
 
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
+# The holographic interface (hud/), once built with `npm run build`, is served at /hud/.
+if HUD_DIR.is_dir():
+    app.mount("/hud", StaticFiles(directory=HUD_DIR, html=True), name="hud")
+else:
+
+    @app.get("/hud")
+    @app.get("/hud/")
+    async def hud_missing():
+        return PlainTextResponse(
+            "The holographic interface isn't built yet. In Terminal run:\n\n"
+            "  cd ~/jarvis/hud && npm install && npm run build\n\n"
+            "then restart Jarvis (./start.sh) and reload this page.",
+            status_code=404,
+        )
+
 
 def main():
     import uvicorn
 
     print(f"Jarvis is running at http://{config.HOST}:{config.PORT}")
+    if HUD_DIR.is_dir():
+        print(f"Holographic interface: http://{config.HOST}:{config.PORT}/hud/")
     uvicorn.run(app, host=config.HOST, port=config.PORT, log_level="warning")
 
 

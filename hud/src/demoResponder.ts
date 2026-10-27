@@ -4,11 +4,9 @@
 //  Every reply below is canned text generated locally in the browser.
 //  Nothing is sent to Claude or any other service.
 //
-//  To connect Claude later, write a function with the same signature
-//  (`(input: string) => Promise<string>`) that calls your backend, and pass it
-//  to <App respond={...} /> in main.tsx with `engine` set to 'claude'.
-//  Keep your API key on a server (for example the existing Jarvis Python
-//  server), never in this browser code.
+//  It is used only when the Jarvis server (./start.sh) is not running, or
+//  when the page is opened with ?demo. With the server running, replies come
+//  from Claude through it instead (see jarvisResponder.ts).
 // ============================================================================
 
 export type Responder = (input: string) => Promise<string>

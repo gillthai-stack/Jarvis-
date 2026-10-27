@@ -18,6 +18,8 @@ export interface AppProps {
   respond: Responder
   /** 'demo' shows the demo-mode labels. Only switch to 'claude' once a real Claude responder is passed in. */
   engine: 'demo' | 'claude'
+  /** The Claude model the Jarvis server is using, when connected. */
+  model?: string
 }
 
 const SPEAK_PREF_KEY = 'jarvis-hud-speak-replies'
@@ -75,7 +77,7 @@ function readSpeakPref() {
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
 
-export default function App({ respond, engine }: AppProps) {
+export default function App({ respond, engine, model }: AppProps) {
   const [state, setState] = useState<AssistantState>('idle')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -290,11 +292,16 @@ export default function App({ respond, engine }: AppProps) {
 
         <div className="topbar-right">
           {isDemo ? (
-            <span className="engine-badge engine-demo" title="Replies are canned demo text. The Claude API is not connected.">
+            <span
+              className="engine-badge engine-demo"
+              title="Replies are canned demo text. Start the Jarvis server (./start.sh) and reload this page to use Claude."
+            >
               Demo mode · Claude API not connected
             </span>
           ) : (
-            <span className="engine-badge engine-live">Claude connected</span>
+            <span className="engine-badge engine-live" title={model ? `Model: ${model}` : undefined}>
+              Claude · via Jarvis server
+            </span>
           )}
           <time className="clock" dateTime={now.toISOString()}>
             <span className="clock-time">{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
@@ -330,7 +337,7 @@ export default function App({ respond, engine }: AppProps) {
             </div>
             <div>
               <dt>Response engine</dt>
-              <dd className={isDemo ? 'warn' : 'ok'}>{isDemo ? 'Demo (offline)' : 'Claude'}</dd>
+              <dd className={isDemo ? 'warn' : 'ok'}>{isDemo ? 'Demo (offline)' : `Claude${model ? ` · ${model.replace(/^claude-/, '')}` : ''}`}</dd>
             </div>
             <div>
               <dt>Voice input</dt>
