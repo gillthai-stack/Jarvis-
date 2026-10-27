@@ -9,7 +9,7 @@ import HudOverlay from './HudOverlay'
 import ReactorCore from './ReactorCore'
 import Rings from './Rings'
 import { DustField, LatitudeScan, OrbitalParticles, RadarFloor, ScanArcs, Shockwave, Waveform } from './Effects'
-import { STATE_STYLE, createLive, type CoreStats, type Live, type LiveRef } from './live'
+import { BUSY_STATES, STATE_STYLE, createLive, type CoreStats, type Live, type LiveRef } from './live'
 
 /** Eases every live value toward the current state's style and works out the amplitude. */
 function Controller({
@@ -51,7 +51,7 @@ function Controller({
     l.pulseRate = damp(l.pulseRate, s.pulseRate * motion, 4, dt)
     l.pulseDepth = damp(l.pulseDepth, s.pulseDepth, 4, dt)
     l.spread = damp(l.spread, s.spread, 3, dt)
-    l.thinking = damp(l.thinking, state === 'thinking' ? 1 : 0, 4, dt)
+    l.thinking = damp(l.thinking, BUSY_STATES.has(state) ? 1 : 0, 4, dt)
     l.listening = damp(l.listening, state === 'listening' ? 1 : 0, 4, dt)
     l.speaking = damp(l.speaking, state === 'speaking' ? 1 : 0, 4, dt)
 
@@ -72,7 +72,7 @@ function Controller({
     } else if (state === 'speaking') {
       const syllables = 0.22 + 0.28 * Math.abs(Math.sin(l.phase * 0.55)) * Math.abs(Math.sin(l.phase * 0.23 + 1))
       amp = Math.max(syllables, energyRef.current * 0.85)
-    } else if (state === 'thinking') {
+    } else if (BUSY_STATES.has(state)) {
       amp = 0.1 + 0.05 * Math.sin(l.phase * 0.5)
     } else if (state === 'listening') {
       amp = 0.08

@@ -50,4 +50,9 @@ fi
 PORT=$(grep -E '^JARVIS_PORT=' .env | cut -d= -f2 || true)
 PORT=${PORT:-8765}
 (sleep 2 && open "http://127.0.0.1:${PORT}") >/dev/null 2>&1 &
-exec .venv/bin/python -m jarvis
+
+# The desktop-control service (screenshots, clicks, typing) runs alongside on 127.0.0.1 only.
+.venv/bin/python -m jarvis.desktop_api &
+DESKTOP_PID=$!
+trap 'kill "$DESKTOP_PID" 2>/dev/null || true' EXIT INT TERM
+.venv/bin/python -m jarvis
