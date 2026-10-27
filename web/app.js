@@ -3,6 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const els = {
   orb: $("orb"), status: $("status"), model: $("model"), effort: $("effort"), reset: $("reset"),
+  voice: $("voice"), rate: $("rate"),
   messages: $("messages"), empty: $("empty"), form: $("composer"), input: $("input"), send: $("send"),
   mic: $("mic"), handsfree: $("handsfree"), speak: $("speak"), heard: $("heard"),
   activity: $("activity"), toolinfo: $("toolinfo"),
@@ -179,15 +180,51 @@ function logItem(cls, name, detail) {
 
 // ---------- speech output ----------
 
+function defaultVoice(voices) {
+  return voices.find((v) => /Daniel|Arthur|Oliver/.test(v.name) && v.lang.startsWith("en"))
+    || voices.find((v) => v.lang === "en-GB") || voices.find((v) => v.lang.startsWith("en"));
+}
+
+function chosenVoice() {
+  const voices = speechSynthesis.getVoices();
+  return voices.find((v) => v.voiceURI === els.voice.value) || defaultVoice(voices);
+}
+
+// Fill the voice menu with the English voices installed on this computer.
+function loadVoices() {
+  if (!("speechSynthesis" in window)) { els.voice.disabled = true; return; }
+  const voices = speechSynthesis.getVoices();
+  if (!voices.length) return;
+  const english = voices.filter((v) => v.lang.startsWith("en"));
+  const list = (english.length ? english : voices).sort((a, b) => a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
+  const saved = loadPref("voice");
+  const pick = list.find((v) => v.voiceURI === saved) || defaultVoice(list) || list[0];
+  els.voice.innerHTML = "";
+  for (const v of list) {
+    const opt = document.createElement("option");
+    opt.value = v.voiceURI;
+    opt.textContent = `${v.name} (${v.lang})`;
+    els.voice.appendChild(opt);
+  }
+  els.voice.value = pick.voiceURI;
+}
+
+function previewVoice() {
+  stopSpeaking();
+  const utter = new SpeechSynthesisUtterance("Good evening. This is how I will sound.");
+  const voice = chosenVoice();
+  if (voice) utter.voice = voice;
+  utter.rate = Number(els.rate.value) || 1.05;
+  speechSynthesis.speak(utter);
+}
+
 function speak(text) {
   if (!("speechSynthesis" in window)) { idleStatus(); return; }
   const plain = text.replace(/```[\s\S]*?```/g, " (code omitted) ").replace(/[*_#`>|]/g, "").replace(/\[(.*?)\]\(.*?\)/g, "$1");
   const utter = new SpeechSynthesisUtterance(plain);
-  const voices = speechSynthesis.getVoices();
-  const preferred = voices.find((v) => /Daniel|Arthur|Oliver/.test(v.name) && v.lang.startsWith("en"))
-    || voices.find((v) => v.lang === "en-GB") || voices.find((v) => v.lang.startsWith("en"));
-  if (preferred) utter.voice = preferred;
-  utter.rate = 1.05;
+  const voice = chosenVoice();
+  if (voice) utter.voice = voice;
+  utter.rate = Number(els.rate.value) || 1.05;
   pauseListening();
   setState("speaking", "Speaking…");
   utter.onend = utter.onerror = () => { idleStatus(); resumeListening(); };
@@ -348,7 +385,11 @@ els.empty.querySelectorAll("button").forEach((b) => b.addEventListener("click", 
 els.model.addEventListener("change", () => { savePref("model", els.model.value); send({ type: "set_model", model: els.model.value }); });
 els.effort.addEventListener("change", () => { savePref("effort", els.effort.value); send({ type: "set_effort", effort: els.effort.value }); });
 els.reset.addEventListener("click", () => { stopSpeaking(); send({ type: "reset" }); });
-if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = () => {};
+if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = loadVoices;
+loadVoices();
+if ([...els.rate.options].some((o) => o.value === loadPref("rate"))) els.rate.value = loadPref("rate");
+els.voice.addEventListener("change", () => { savePref("voice", els.voice.value); previewVoice(); });
+els.rate.addEventListener("change", () => { savePref("rate", els.rate.value); previewVoice(); });
 
 if (loadPref("speak") === "0") els.speak.checked = false;
 if (!Recognition) { els.handsfree.disabled = true; els.heard.textContent = "Voice input needs Chrome or Safari."; }

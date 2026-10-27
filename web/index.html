@@ -84,6 +84,17 @@
         <h2>Voice</h2>
         <label class="toggle"><input type="checkbox" id="handsfree"> Hands-free (wake word "Jarvis")</label>
         <label class="toggle"><input type="checkbox" id="speak" checked> Speak replies</label>
+        <div class="voicepick">
+          <label>Voice <select id="voice" title="Pick a voice to hear a sample"></select></label>
+          <label>Speed
+            <select id="rate">
+              <option value="0.9">Slow</option>
+              <option value="1.05" selected>Normal</option>
+              <option value="1.2">Fast</option>
+              <option value="1.4">Faster</option>
+            </select>
+          </label>
+        </div>
         <div id="heard" class="heard"></div>
       </div>
       <div class="panel grow">
