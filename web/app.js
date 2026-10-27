@@ -139,6 +139,23 @@ function handle(ev) {
       if (replyText.trim() && els.speak.checked) speak(replyText);
       else { idleStatus(); resumeListening(); }
       break;
+    case "action":
+      showAction(ev);
+      break;
+    case "agent_state":
+      if (ev.state === "AWAITING_APPROVAL") setState("thinking", "Waiting for your approval…");
+      else if (ev.state === "EXECUTING") setState("thinking", "Working on your computer…");
+      else if (ev.state === "VERIFYING") setState("thinking", "Checking the result…");
+      if (ev.final && ev.had_actions) logItem(ev.state === "COMPLETED" ? "ok" : "fail", `Task ${ev.state.toLowerCase()}`, ev.detail || "");
+      break;
+    case "screenshot":
+      logItem("", "Screenshot", "").querySelector(".detail").appendChild(Object.assign(document.createElement("img"), {
+        src: ev.data_url, alt: "Screenshot Jarvis took", style: "max-width:100%;border-radius:6px;margin-top:4px",
+      }));
+      break;
+    case "decision":
+      if (!ev.ok) addMessage("error", ev.message);
+      break;
     case "settings":
       els.model.value = ev.model; els.effort.value = ev.effort;
       logItem("", "Settings", `Brain: ${ev.model}, effort: ${ev.effort}`);
@@ -148,6 +165,38 @@ function handle(ev) {
       els.empty.style.display = "";
       els.activity.innerHTML = "";
       break;
+  }
+}
+
+// Computer-use proposals: show exactly what will happen, with Approve and Cancel buttons.
+const actionItems = new Map();
+function describeAction(a) {
+  const d = a.display || {};
+  if (a.kind === "file_plan") return `${d.reason || ""}\n` + (d.moves || []).map((m) => `${m.source} → ${m.destination}`).join("\n");
+  if (a.kind === "click") return `${d.clicks === 2 ? "Double-" : ""}${d.button} click on ${d.target} at (${d.x}, ${d.y}) in screenshot ${d.screenshot_id}`;
+  if (a.kind === "type") return `Type into ${d.target}:\n“${d.text}”`;
+  return a.summary;
+}
+function showAction(ev) {
+  const a = ev.action;
+  let item = actionItems.get(a.id);
+  if (!item) {
+    item = logItem("tool", a.summary, describeAction(a));
+    item.querySelector(".detail").style.whiteSpace = "pre-wrap";
+    actionItems.set(a.id, item);
+  }
+  const status = item.querySelector(".status") || item.appendChild(Object.assign(document.createElement("div"), { className: "status" }));
+  status.textContent = [a.status, a.result, a.verification && `Verification: ${a.verification.verified ? "passed" : "failed"} — ${a.verification.evidence}`].filter(Boolean).join(" · ");
+  item.className = ["verified", "executed"].includes(a.status) ? "ok" : ["failed", "rejected", "expired"].includes(a.status) ? "fail" : "tool";
+  item.querySelectorAll("button").forEach((b) => b.remove());
+  if (ev.approval_token && a.status === "pending") {
+    for (const [label, type] of [["Approve", "approve"], ["Cancel", "reject"]]) {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.style.marginRight = "6px";
+      b.onclick = () => { send({ type, id: a.id, token: ev.approval_token }); item.querySelectorAll("button").forEach((x) => x.remove()); };
+      item.appendChild(b);
+    }
   }
 }
 
@@ -162,6 +211,11 @@ const LABELS = {
   notify: "Showing a notification", list_shortcuts: "Listing Shortcuts", run_shortcut: "Running a Shortcut",
   obsidian_search: "Searching your vault", obsidian_read: "Reading a note", obsidian_write: "Writing a note",
   obsidian_daily: "Updating today's daily note", obsidian_open: "Opening Obsidian",
+  get_desktop_screenshot: "Taking a screenshot", list_sandbox_files: "Listing sandbox files",
+  propose_file_moves: "Planning file moves", execute_approved_file_plan: "Moving files",
+  propose_desktop_click: "Planning a click", execute_approved_desktop_click: "Clicking",
+  propose_keyboard_text: "Planning typing", execute_approved_keyboard_text: "Typing",
+  report_verification: "Checking the result",
   web_search_tool_result: "Searching the web", web_fetch_tool_result: "Reading a web page",
 };
 const toolLabel = (n) => LABELS[n] || n;

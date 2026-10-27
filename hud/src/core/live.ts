@@ -21,7 +21,18 @@ export const STATE_STYLE: Record<AssistantState, StateStyle> = {
   listening: { color: '#2dd4bf', ringSpeed: 0.45, pulseRate: 2.6, pulseDepth: 0.03, orbitSpeed: 0.5, scanSpeed: 1.0, glow: 1.05, spread: 1.07 },
   thinking: { color: '#7dd3fc', ringSpeed: 2.1, pulseRate: 6, pulseDepth: 0.025, orbitSpeed: 1.8, scanSpeed: 3.0, glow: 0.95, spread: 0.94 },
   speaking: { color: '#a5f3fc', ringSpeed: 0.75, pulseRate: 8, pulseDepth: 0.03, orbitSpeed: 0.7, scanSpeed: 1.3, glow: 1.3, spread: 1.02 },
+  // Computer-use task states.
+  planning: { color: '#7dd3fc', ringSpeed: 1.6, pulseRate: 5, pulseDepth: 0.025, orbitSpeed: 1.4, scanSpeed: 2.4, glow: 0.95, spread: 0.96 },
+  awaiting_approval: { color: '#fbbf24', ringSpeed: 0.3, pulseRate: 2.2, pulseDepth: 0.05, orbitSpeed: 0.3, scanSpeed: 0.6, glow: 1.15, spread: 1.04 },
+  executing: { color: '#fb923c', ringSpeed: 2.6, pulseRate: 7, pulseDepth: 0.03, orbitSpeed: 2.2, scanSpeed: 3.4, glow: 1.2, spread: 0.92 },
+  verifying: { color: '#c4b5fd', ringSpeed: 1.2, pulseRate: 4, pulseDepth: 0.025, orbitSpeed: 1.0, scanSpeed: 4.0, glow: 1.0, spread: 0.98 },
+  completed: { color: '#4ade80', ringSpeed: 0.35, pulseRate: 1.4, pulseDepth: 0.03, orbitSpeed: 0.35, scanSpeed: 0.5, glow: 1.2, spread: 1.03 },
+  failed: { color: '#f87171', ringSpeed: 0.18, pulseRate: 3.2, pulseDepth: 0.04, orbitSpeed: 0.2, scanSpeed: 0.3, glow: 1.1, spread: 0.97 },
+  cancelled: { color: '#94a3b8', ringSpeed: 0.15, pulseRate: 0.9, pulseDepth: 0.015, orbitSpeed: 0.15, scanSpeed: 0.25, glow: 0.6, spread: 0.98 },
 }
+
+/** States that animate like active thought (fast scans, inner churn). */
+export const BUSY_STATES: ReadonlySet<AssistantState> = new Set(['thinking', 'planning', 'executing', 'verifying'])
 
 /** Shared animated values written by the controller and read by every part of the core. */
 export interface Live {

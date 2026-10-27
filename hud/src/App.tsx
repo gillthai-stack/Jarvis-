@@ -2,7 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { createAudioFrame, createMicMeter, type AudioFrame } from './audio'
 import JarvisCore from './core/JarvisCore'
 import type { Responder } from './demoResponder'
-import { STATE_LABEL, type AssistantState, type ChatMessage, type MessageRole } from './types'
+import type { JarvisLink, ServerEvent } from './jarvisResponder'
+import OpsPanel from './ops/OpsPanel'
+import {
+  AGENT_TO_CORE,
+  STATE_LABEL,
+  type AgentAction,
+  type AgentStatus,
+  type AssistantState,
+  type ChatMessage,
+  type MessageRole,
+  type ScreenshotFrame,
+} from './types'
 import {
   cancelSpeech,
   createRecognizer,
@@ -20,7 +31,14 @@ export interface AppProps {
   engine: 'demo' | 'claude'
   /** The Claude model the Jarvis server is using, when connected. */
   model?: string
+  /** Live server connection, for computer-use actions and approvals. Absent in demo mode. */
+  link?: JarvisLink
 }
+
+const MAX_SCREENSHOTS = 6
+const MAX_ACTIONS = 50
+/** How long the core shows COMPLETED / FAILED / CANCELLED after a computer-use task ends. */
+const FINAL_STATE_MS = 6000
 
 const SPEAK_PREF_KEY = 'jarvis-hud-speak-replies'
 
@@ -77,7 +95,7 @@ function readSpeakPref() {
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
 
-export default function App({ respond, engine, model }: AppProps) {
+export default function App({ respond, engine, model, link }: AppProps) {
   const [state, setState] = useState<AssistantState>('idle')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -86,6 +104,9 @@ export default function App({ respond, engine, model }: AppProps) {
   const [speakReplies, setSpeakReplies] = useState(readSpeakPref)
   const [voiceName, setVoiceName] = useState<string | null>(null)
   const [fps, setFps] = useState(0)
+  const [agent, setAgent] = useState<AgentStatus | null>(null)
+  const [actions, setActions] = useState<AgentAction[]>([])
+  const [screenshots, setScreenshots] = useState<ScreenshotFrame[]>([])
 
   const micSupported = useMemo(isRecognitionSupported, [])
   const ttsSupported = useMemo(isSynthesisSupported, [])
@@ -129,6 +150,67 @@ export default function App({ respond, engine, model }: AppProps) {
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'end' })
   }, [messages, reducedMotion])
+
+  // Computer-use events from the server: task state, proposed/executed actions and screenshots.
+  useEffect(() => {
+    if (!link) return
+    const upsert = (incoming: AgentAction) =>
+      setActions((prev) => {
+        const i = prev.findIndex((a) => a.id === incoming.id)
+        if (i === -1) return [...prev, incoming].slice(-MAX_ACTIONS)
+        const next = [...prev]
+        // Status updates never carry the token; once decided, it is dropped.
+        const keepToken = incoming.status === 'pending' ? prev[i].approvalToken : undefined
+        next[i] = { ...prev[i], ...incoming, approvalToken: incoming.approvalToken ?? keepToken }
+        return next
+      })
+    const onEvent = (ev: ServerEvent) => {
+      if (ev.type === 'agent_state' && ev.state) {
+        setAgent({
+          state: ev.state,
+          detail: ev.detail ?? '',
+          task: ev.task ?? '',
+          final: !!ev.final,
+          hadActions: !!ev.had_actions,
+          at: Date.now(),
+        })
+      } else if (ev.type === 'action' && ev.action) {
+        upsert({
+          ...ev.action,
+          approvalToken: ev.approval_token,
+          deadline: ev.approval_token && ev.timeout ? Date.now() + ev.timeout * 1000 : undefined,
+        })
+      } else if (ev.type === 'screenshot' && ev.id && ev.data_url) {
+        const frame = { id: ev.id, width: ev.width ?? 0, height: ev.height ?? 0, dataUrl: ev.data_url, at: Date.now() }
+        setScreenshots((prev) => [...prev, frame].slice(-MAX_SCREENSHOTS))
+      } else if (ev.type === 'decision' && ev.ok === false && ev.message) {
+        setNotice(ev.message)
+      }
+    }
+    const unsubscribe = link.subscribe(onEvent)
+    // Earlier actions (from before this page loaded) for the history list.
+    fetch('/api/actions')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { actions?: AgentAction[] } | null) => {
+        if (!data?.actions) return
+        setActions((prev) => {
+          const known = new Set(prev.map((a) => a.id))
+          return [...data.actions!.filter((a) => !known.has(a.id) && a.status !== 'pending'), ...prev].slice(-MAX_ACTIONS)
+        })
+      })
+      .catch(() => undefined)
+    return unsubscribe
+  }, [link])
+
+  const decide = useCallback(
+    (action: AgentAction, approve: boolean) => {
+      if (!link || !action.approvalToken) return
+      link.decide(action.id, action.approvalToken, approve)
+      // Clear the token at once so a second press can't send it again.
+      setActions((prev) => prev.map((a) => (a.id === action.id ? { ...a, approvalToken: undefined } : a)))
+    },
+    [link],
+  )
 
   const submit = useCallback(
     async (raw: string) => {
@@ -225,11 +307,12 @@ export default function App({ respond, engine, model }: AppProps) {
 
   const stopEverything = useCallback(() => {
     turnRef.current++
+    link?.cancel()
     recognizerRef.current?.abort()
     cancelSpeech()
     setInterim('')
     setState('idle')
-  }, [])
+  }, [link])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -254,11 +337,36 @@ export default function App({ respond, engine, model }: AppProps) {
 
   const isDemo = engine === 'demo'
   const busy = state !== 'idle'
-  const coreLoad = { idle: 18, listening: 46, thinking: 92, speaking: 64 }[state]
+
+  // The core shows the computer-use task state while one is running, and its outcome for a few
+  // seconds afterwards. Listening always wins so voice input stays obvious.
+  const agentLive = agent && !agent.final ? agent : null
+  const agentRecent = agent && agent.final && agent.hadActions && now.getTime() - agent.at < FINAL_STATE_MS ? agent : null
+  let coreState: AssistantState = state
+  if (state === 'listening') coreState = 'listening'
+  else if (agentLive && (agentLive.state !== 'PLANNING' || agentLive.hadActions)) coreState = AGENT_TO_CORE[agentLive.state]
+  else if (agentRecent && state !== 'thinking') coreState = AGENT_TO_CORE[agentRecent.state]
+
+  const coreLoad: Record<AssistantState, number> = {
+    idle: 18,
+    listening: 46,
+    thinking: 92,
+    speaking: 64,
+    planning: 88,
+    awaiting_approval: 40,
+    executing: 97,
+    verifying: 80,
+    completed: 30,
+    failed: 22,
+    cancelled: 12,
+  }
+  const pendingApproval = actions.some((a) => a.status === 'pending' && a.approvalToken)
 
   const statusLine = notice
     ? notice
-    : state === 'listening'
+    : pendingApproval
+      ? 'An action is waiting for your approval in the Operations panel.'
+      : state === 'listening'
       ? interim || 'Listening… speak now.'
       : state === 'thinking'
         ? 'Processing request…'
@@ -271,7 +379,7 @@ export default function App({ respond, engine, model }: AppProps) {
             : 'Voice input is not supported in this browser. Type a command instead (Chrome, Edge or Safari support voice).'
 
   return (
-    <div className={`app state-${state}`}>
+    <div className={`app state-${coreState}`}>
       <a className="skip-link" href="#command-input">
         Skip to command line
       </a>
@@ -285,9 +393,9 @@ export default function App({ respond, engine, model }: AppProps) {
           </h1>
         </div>
 
-        <div className={`state-chip state-chip-${state}`}>
+        <div className={`state-chip state-chip-${coreState}`}>
           <span className="state-dot" aria-hidden="true" />
-          <span>{STATE_LABEL[state]}</span>
+          <span>{STATE_LABEL[coreState]}</span>
         </div>
 
         <div className="topbar-right">
@@ -312,13 +420,13 @@ export default function App({ respond, engine, model }: AppProps) {
 
       {/* Announces state changes to screen readers. */}
       <p className="sr-only" role="status" aria-live="polite">
-        JARVIS is {STATE_LABEL[state].toLowerCase()}.
+        JARVIS is {STATE_LABEL[coreState].toLowerCase()}.
       </p>
 
       <main className="main">
-        <section className="core-stage" aria-label={`Holographic core, currently ${STATE_LABEL[state].toLowerCase()}`}>
+        <section className="core-stage" aria-label={`Holographic core, currently ${STATE_LABEL[coreState].toLowerCase()}`}>
           <JarvisCore
-            state={state}
+            state={coreState}
             energyRef={energyRef}
             audioRef={audioRef}
             reducedMotion={reducedMotion}
@@ -333,7 +441,7 @@ export default function App({ respond, engine, model }: AppProps) {
           <dl className="telemetry">
             <div>
               <dt>Core state</dt>
-              <dd>{STATE_LABEL[state]}</dd>
+              <dd>{STATE_LABEL[coreState]}</dd>
             </div>
             <div>
               <dt>Response engine</dt>
@@ -386,10 +494,10 @@ export default function App({ respond, engine, model }: AppProps) {
           <div className="meter" aria-hidden="true">
             <div className="meter-label">
               <span>Core activity</span>
-              <span>{coreLoad}%</span>
+              <span>{coreLoad[coreState]}%</span>
             </div>
             <div className="meter-track">
-              <div className="meter-fill" style={{ width: `${coreLoad}%` }} />
+              <div className="meter-fill" style={{ width: `${coreLoad[coreState]}%` }} />
             </div>
             <div className="bars">
               {Array.from({ length: 16 }, (_, i) => (
@@ -399,6 +507,17 @@ export default function App({ respond, engine, model }: AppProps) {
           </div>
         </aside>
 
+        <div className="right-stack">
+        {link && (
+          <OpsPanel
+            agent={agent}
+            actions={actions}
+            screenshots={screenshots}
+            now={now.getTime()}
+            onDecide={decide}
+            onCancelTask={() => link.cancel()}
+          />
+        )}
         <aside className="panel panel-right" aria-labelledby="log-title">
           <h2 id="log-title" className="panel-title">
             Comms log
@@ -424,6 +543,7 @@ export default function App({ respond, engine, model }: AppProps) {
             <div ref={logEndRef} />
           </div>
         </aside>
+        </div>
       </main>
 
       <footer className="commandbar">

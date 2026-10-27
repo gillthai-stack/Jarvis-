@@ -4,6 +4,7 @@
 // dashboard uses.
 
 import type { Responder } from './demoResponder'
+import type { ActionStatus, AgentAction, AgentStateName } from './types'
 
 export interface ServerInfo {
   model: string
@@ -28,19 +29,49 @@ export async function probeJarvisServer(timeoutMs = 2000): Promise<ServerInfo | 
   }
 }
 
-interface ServerEvent {
+/** Events from the server's /ws socket. Only the fields the HUD reads are listed. */
+export interface ServerEvent {
   type: string
   text?: string
   message?: string
+  // agent_state
+  state?: AgentStateName
+  detail?: string
+  task?: string
+  final?: boolean
+  had_actions?: boolean
+  // action
+  action?: Omit<AgentAction, 'approvalToken' | 'deadline'> & { status: ActionStatus }
+  approval_token?: string
+  timeout?: number
+  // screenshot
+  id?: string
+  width?: number
+  height?: number
+  data_url?: string
+  // decision
+  ok?: boolean
+}
+
+/** The live connection: answers requests and also carries computer-use events and controls. */
+export interface JarvisLink {
+  respond: Responder
+  /** Receive every server event (actions, screenshots, task states). Returns an unsubscribe function. */
+  subscribe: (listener: (ev: ServerEvent) => void) => () => void
+  /** Approve or cancel one proposed action. The token came with the proposal and is used once. */
+  decide: (id: string, token: string, approve: boolean) => void
+  /** Stop the running task on the server, including anything waiting for approval. */
+  cancel: () => void
 }
 
 function socketUrl() {
   return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
 }
 
-export function createJarvisResponder(url = socketUrl()): Responder {
+export function createJarvisLink(url = socketUrl()): JarvisLink {
   let socket: WebSocket | null = null
   let onEvent: ((ev: ServerEvent) => void) | null = null
+  const listeners = new Set<(ev: ServerEvent) => void>()
   let onLost: (() => void) | null = null
   // The server answers one request at a time, so requests are queued here too.
   let queue: Promise<unknown> = Promise.resolve()
@@ -59,11 +90,14 @@ export function createJarvisResponder(url = socketUrl()): Responder {
         onLost?.()
       }
       s.onmessage = (e) => {
+        let ev: ServerEvent
         try {
-          onEvent?.(JSON.parse(e.data as string) as ServerEvent)
+          ev = JSON.parse(e.data as string) as ServerEvent
         } catch {
-          /* ignore malformed frames */
+          return /* ignore malformed frames */
         }
+        listeners.forEach((l) => l(ev))
+        onEvent?.(ev)
       }
     })
 
@@ -91,9 +125,21 @@ export function createJarvisResponder(url = socketUrl()): Responder {
     })
   }
 
-  return (input) => {
-    const result = queue.then(() => askOnce(input))
-    queue = result.catch(() => undefined)
-    return result
+  const send = (msg: object) => {
+    if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(msg))
+  }
+
+  return {
+    respond: (input) => {
+      const result = queue.then(() => askOnce(input))
+      queue = result.catch(() => undefined)
+      return result
+    },
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    decide: (id, token, approve) => send({ type: approve ? 'approve' : 'reject', id, token }),
+    cancel: () => send({ type: 'cancel' }),
   }
 }

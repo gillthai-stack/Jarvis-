@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, google_tools, notes, obsidian, tools
+from . import computer_use, config, google_tools, notes, obsidian, tools
 from .agent import Jarvis
 
 WEB_DIR = config.ROOT / "web"
@@ -87,27 +87,75 @@ async def get_config():
         "efforts": config.EFFORTS,
         "effort": jarvis.effort,
         "user": config.USER_NAME,
-        "tools": list(tools.TOOLS) + ["web_search", "web_fetch"],
+        "tools": list(tools.TOOLS) + list(computer_use.TOOLS) + ["web_search", "web_fetch"],
         "search_dirs": [str(p) for p in config.SEARCH_DIRS],
         "notes_dir": str(config.NOTES_DIR),
         "google": google_tools.status(),
         "obsidian": obsidian.status(),
+        # Where file moves are allowed. The desktop-control token is deliberately not included.
+        "sandbox_dir": str(config.SANDBOX_DIR),
     }
+
+
+@app.get("/api/actions")
+async def actions():
+    """Recent proposed and executed computer-use actions, for the dashboard's history."""
+    return {"actions": jarvis.computer.recent()}
+
+
+@app.get("/api/desktop/status")
+async def desktop_status():
+    try:
+        info = await asyncio.to_thread(jarvis.computer.desktop.health)
+        return {"connected": True, "backend": info.get("backend")}
+    except computer_use.DesktopError as e:
+        return {"connected": False, "error": str(e)}
+
+
+def origin_allowed(origin: str | None) -> bool:
+    # Browsers always send Origin on WebSockets; a page on another site must not reach Jarvis.
+    # Local tools that send no Origin (scripts, tests) are allowed.
+    return origin is None or origin in config.ALLOWED_ORIGINS
 
 
 @app.websocket("/ws")
 async def ws(socket: WebSocket):
+    if not origin_allowed(socket.headers.get("origin")):
+        await socket.close(code=1008)
+        return
     await socket.accept()
+    running: set[asyncio.Task] = set()
 
     async def emit(event: dict):
-        await socket.send_text(json.dumps(event))
+        try:
+            await socket.send_text(json.dumps(event))
+        except Exception:
+            pass  # the page went away; the task still finishes or is cancelled below
+
+    def start(coro):
+        # Requests run in the background so Approve/Cancel messages are read while Jarvis works.
+        task = asyncio.create_task(coro)
+        running.add(task)
+        task.add_done_callback(running.discard)
 
     try:
         while True:
-            msg = json.loads(await socket.receive_text())
+            try:
+                msg = json.loads(await socket.receive_text())
+            except ValueError:
+                continue
+            if not isinstance(msg, dict):
+                continue
             kind = msg.get("type")
-            if kind == "ask" and msg.get("text", "").strip():
-                await jarvis.ask(msg["text"].strip(), emit)
+            if kind == "ask" and isinstance(msg.get("text"), str) and msg["text"].strip():
+                start(jarvis.ask(msg["text"].strip()[:4000], emit))
+            elif kind in ("approve", "reject"):
+                ok, message = await jarvis.computer.decide(msg.get("id"), msg.get("token"), kind == "approve")
+                await emit({"type": "decision", "id": msg.get("id"), "ok": ok, "message": message})
+            elif kind == "cancel":
+                await jarvis.computer.cancel()
+                for task in list(running):
+                    task.cancel()
             elif kind == "set_model" and msg.get("model") in config.MODELS:
                 jarvis.model = msg["model"]
                 await emit({"type": "settings", "model": jarvis.model, "effort": jarvis.effort})
@@ -119,6 +167,12 @@ async def ws(socket: WebSocket):
                 await emit({"type": "reset"})
     except WebSocketDisconnect:
         pass
+    finally:
+        # Nobody is left to approve anything, so stop whatever this page started.
+        if running:
+            await jarvis.computer.cancel("The dashboard was closed.")
+        for task in list(running):
+            task.cancel()
 
 
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
