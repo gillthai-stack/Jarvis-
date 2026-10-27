@@ -13,6 +13,7 @@ from test_computer_use import Harness
 
 from jarvis import agent, config, mac_tools, tools
 from jarvis.agent import Jarvis
+from jarvis.memory import MemoryStore
 
 
 def ask(jarvis, prompt, h):
@@ -20,11 +21,11 @@ def ask(jarvis, prompt, h):
 
 
 def test_saved_notes_and_time_come_with_the_request_so_no_extra_round_trip(tmp_path, monkeypatch):
-    monkeypatch.setattr(tools, "MEMORY_FILE", tmp_path / "memory.json")
-    (tmp_path / "memory.json").write_text(json.dumps([{"note": "Gill likes tea", "saved": "2026-10-26 09:00"}]))
+    store = MemoryStore(tmp_path / "memory.db")
+    store.add_fact("Gill likes tea")
     h = Harness(tmp_path)
     fake = FakeAnthropic([lambda p: [text("Tea it is.")], lambda p: [text("Still tea.")]])
-    jarvis = Jarvis(client=fake, computer=h.cu)
+    jarvis = Jarvis(client=fake, computer=h.cu, store=store)
     ask(jarvis, "What do I like?", h)
     first = fake.calls[0]
     assert "Gill likes tea" in first["system"]
@@ -32,7 +33,7 @@ def test_saved_notes_and_time_come_with_the_request_so_no_extra_round_trip(tmp_p
     stamp, said = first["messages"][0]["content"]
     assert stamp["text"].startswith("[") and said["text"] == "What do I like?"
     # A note saved mid-conversation doesn't change the system prompt, so the prompt cache keeps working.
-    (tmp_path / "memory.json").write_text(json.dumps([{"note": "changed", "saved": "now"}]))
+    store.add_fact("changed")
     ask(jarvis, "And?", h)
     assert fake.calls[1]["system"] == first["system"]
     jarvis.reset()

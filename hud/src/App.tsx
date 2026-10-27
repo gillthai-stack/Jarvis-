@@ -11,6 +11,8 @@ import {
   type SpeechOutput,
   type VoiceStatus,
 } from './localVoice'
+import MemoryPanel from './memory/MemoryPanel'
+import { memoryApi } from './memory/memoryApi'
 import OpsPanel from './ops/OpsPanel'
 import { createSpeechQueue, type SpeechQueue } from './speechQueue'
 import {
@@ -150,6 +152,11 @@ export default function App({ respond, engine, model, link }: AppProps) {
   const [progress, setProgress] = useState('')
   const [lastTiming, setLastTiming] = useState<{ total: number; first: number | null } | null>(null)
   const [micPermission, setMicPermission] = useMicPermission()
+  const [memoryOpen, setMemoryOpen] = useState(false)
+  /** Facts Jarvis suggested that are waiting for Keep or Discard. */
+  const [pendingFacts, setPendingFacts] = useState(0)
+  /** Bumped when the server says memory changed, so an open Memory panel reloads. */
+  const [memorySignal, setMemorySignal] = useState(0)
 
   // With the Jarvis server, speech is recognised locally by whisper.cpp and replies are spoken by
   // macOS `say`. The browser's speech recognition (which in Chrome sends audio to Google) is only
@@ -341,6 +348,8 @@ export default function App({ respond, engine, model, link }: AppProps) {
         setNotice(ev.message)
       } else if (ev.type === 'timing' && typeof ev.total_ms === 'number') {
         setLastTiming({ total: ev.total_ms, first: ev.first_text_ms ?? null })
+      } else if (ev.type === 'memory_changed') {
+        setMemorySignal((n) => n + 1)
       }
     }
     const unsubscribe = link.subscribe(onEvent)
@@ -357,6 +366,17 @@ export default function App({ respond, engine, model, link }: AppProps) {
       .catch(() => undefined)
     return unsubscribe
   }, [link])
+
+  const closeMemory = useCallback(() => setMemoryOpen(false), [])
+  const refreshPendingFacts = useCallback(() => {
+    memoryApi
+      .pendingCount()
+      .then(setPendingFacts)
+      .catch(() => undefined) // an older server without memory routes: no badge
+  }, [])
+  useEffect(() => {
+    if (link) refreshPendingFacts()
+  }, [link, memorySignal, refreshPendingFacts])
 
   const decide = useCallback(
     (action: AgentAction, approve: boolean) => {
@@ -606,6 +626,8 @@ export default function App({ respond, engine, model, link }: AppProps) {
     ? notice
     : pendingApproval
       ? 'An action is waiting for your approval in the Operations panel. Voice commands cannot approve it.'
+      : pendingFacts && state === 'idle'
+      ? `Jarvis suggested ${pendingFacts === 1 ? 'a fact' : `${pendingFacts} facts`} to remember. Open Memory to keep or discard.`
       : state === 'listening'
       ? interim || (localStt ? 'Listening… speak now. I stop when you pause, or press the mic.' : 'Listening… speak now.')
       : state === 'thinking'
@@ -687,6 +709,20 @@ export default function App({ respond, engine, model, link }: AppProps) {
             </svg>
             {speaking ? 'Speaking' : speakReplies && ttsSupported ? 'Voice on' : 'Muted'}
           </span>
+          {link && (
+            <button
+              type="button"
+              className={`indicator memory-button${pendingFacts ? ' indicator-pending' : ''}`}
+              onClick={() => setMemoryOpen(true)}
+              aria-haspopup="dialog"
+              title={pendingFacts ? `${pendingFacts} suggested fact${pendingFacts === 1 ? '' : 's'} waiting for your approval` : 'Review what Jarvis remembers'}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M6 4h12v16l-6-4-6 4V4Z" fill="none" />
+              </svg>
+              Memory{pendingFacts ? ` · ${pendingFacts} new` : ''}
+            </button>
+          )}
           <time className="clock" dateTime={now.toISOString()}>
             <span className="clock-time">{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
             <span className="clock-date">{now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}</span>
@@ -917,6 +953,10 @@ export default function App({ respond, engine, model, link }: AppProps) {
           </label>
         </form>
       </footer>
+
+      {memoryOpen && (
+        <MemoryPanel onClose={closeMemory} changeSignal={memorySignal} onChanged={refreshPendingFacts} />
+      )}
     </div>
   )
 }

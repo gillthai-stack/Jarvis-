@@ -14,7 +14,8 @@ It uses Claude through the Anthropic API.
   including PDFs and Word documents. Search uses Spotlight, so it is instant.
 - **Search the web** and read web pages.
 - **Open apps and web pages** on your Mac.
-- **Remember things** about you between conversations (stored in `data/memory.json`).
+- **Remember things** you approve, and search past conversations. Jarvis suggests facts; you keep, edit or delete
+  them in the Memory panel. See [Memory](#memory).
 - **Gmail:** search and read your email, and write replies into your Drafts folder. It cannot send email.
 - **Google Calendar:** see your schedule and add events you ask for. The Today panel shows today's events and unread count.
 - **Morning briefing:** one click (or "Jarvis, morning briefing") for today's schedule, emails that need attention, and news.
@@ -122,10 +123,37 @@ or presses keys while Terminal, iTerm, Warp, VS Code or another terminal or scri
 control can't be used to run commands. Shortcuts that empty the Trash, log out or force-quit are refused outright.
 It cannot yet drag or use a second display.
 
+## Memory
+
+Everything Jarvis remembers is in one file on your Mac, `data/jarvis.db` (SQLite, readable only by your user).
+Open **Memory** in the top bar of the holographic interface to review it.
+
+- **Facts** are lasting things about you or your projects. When Jarvis thinks something is worth remembering it
+  only *suggests* it; the Memory button turns amber and the fact waits until you press **Keep** (or **Discard**).
+  Facts you type in yourself are kept at once. You can edit, re-file under a project, or delete any fact.
+  Only kept facts are sent to Claude, at the start of each conversation.
+- **History** is every finished exchange: what you asked and what Jarvis answered (not tool details). Search it,
+  read a conversation or delete it. Jarvis can search it too ("what did we say about Lisbon last week?"), but it is
+  never sent to Claude unless Jarvis searches it. Deleting the conversation you're in also clears it from Jarvis's
+  current context. A request that fails or that you stop isn't saved.
+- **Secrets are never stored.** Facts that look like a password, PIN, API key, access token, private key, card
+  number or social security number are refused, and the same things are masked (for example
+  `[password or code removed]`) before an exchange goes into history or `data/requests.jsonl`. Detection is
+  pattern based, so don't rely on it: keep secrets in a password manager.
+- Notes from the old `data/memory.json` are imported once as kept facts, and the file is renamed to
+  `memory.json.imported`. Anything secret-looking in it is not imported; delete that file yourself once you've
+  checked the Memory panel.
+
+**Back up:** quit Jarvis, then copy `data/jarvis.db` (and `jarvis.db-wal` if it's there) somewhere safe. Or, while
+Jarvis is running, use **download an export** at the bottom of the Memory panel for a readable JSON copy. To start
+over, quit Jarvis and delete `data/jarvis.db*`. Set `JARVIS_MEMORY_DB` in `.env` to keep the file elsewhere.
+
+The classic dashboard at `/` shares the same memory but has no Memory panel, so approve suggestions in `/hud/`.
+
 ## Speed
 
 - Replies stream in and are spoken a sentence at a time, while the next sentence is already being voiced.
-- Your saved notes and the current time go along with every request, so Jarvis doesn't spend a round trip
+- Your kept facts and the current time go along with every request, so Jarvis doesn't spend a round trip
   looking them up.
 - Effort defaults to `low`, which is quick for everyday requests. Raise it in the classic dashboard (or with
   `JARVIS_EFFORT` in `.env`) for harder jobs. If your `.env` still says `JARVIS_EFFORT=medium`, that wins.
@@ -148,6 +176,7 @@ It cannot yet drag or use a second display.
 | `JARVIS_OBSIDIAN_VAULT` | Your Obsidian vault folder. Empty means the vault Obsidian has open |
 | `JARVIS_NOTES_DIR` | Folder of Markdown notes for the knowledge graph. Empty means your Obsidian vault |
 | `JARVIS_GOOGLE_CREDENTIALS` | Path to your Google OAuth client file (default `data/google_credentials.json`) |
+| `JARVIS_MEMORY_DB` | Where memory is stored (default `data/jarvis.db`) |
 | `JARVIS_PORT` | Dashboard port (default 8765) |
 | `JARVIS_SANDBOX_DIR` | The only folder whose files Jarvis may move (default `~/JARVIS-Sandbox`) |
 | `JARVIS_DESKTOP_PORT` | Port of the local desktop-control service (default 8766, always `127.0.0.1`) |
