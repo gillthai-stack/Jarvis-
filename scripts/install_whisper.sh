@@ -73,7 +73,7 @@ if [ ! -f "$MODEL_FILE" ] || [ "$(shasum -a 1 "$MODEL_FILE" | cut -d' ' -f1)" !=
 fi
 
 echo "Checking it works on whisper.cpp's sample recording…"
-"$BIN" -m "$MODEL_FILE" -f "$DEST/samples/jfk.wav" -nt -np 2>/dev/null | sed 's/^ */  heard: /'
+"$BIN" -m "$MODEL_FILE" -f "$DEST/samples/jfk.wav" -nt -np 2>/dev/null | sed '/^ *$/d; s/^ */  heard: /'
 
 echo
 echo "Local speech recognition is ready."
